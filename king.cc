@@ -1,73 +1,56 @@
 #include "king.h"
 #include "board.h"
+#include "move.h"
+
+namespace {
+const int OFFS[8][2] = {{-1, -1}, {-1, 0}, {-1, 1}, {0, -1},
+                        {0, 1},   {1, -1}, {1, 0},  {1, 1}};
+}
+
+void King::possibleMoves(const Board &bd, std::vector<Move> &out,
+                         bool capturesOnly) const {
+  jump(bd, OFFS, 8, out, capturesOnly);
+  if (capturesOnly) return;
+
+  // Castling: the king may not be in check, pass through or land on an
+  // attacked square, and the squares between king and rook must be empty.
+  const bool white = isWhiteTurn();
+  const int row = white ? 7 : 0;
+  if (getCoord() != std::pair<int, int>{row, 4}) return;
+  const int rights = bd.castlingRights();
+  const char rook = white ? 'R' : 'r';
+  const int kingSide = white ? Board::WHITE_OO : Board::BLACK_OO;
+  const int queenSide = white ? Board::WHITE_OOO : Board::BLACK_OOO;
+
+  if ((rights & (kingSide | queenSide)) == 0) return;
+  if (bd.isAttacked(row, 4, !white)) return;
+
+  if ((rights & kingSide) && bd.keyAt(row, 7) == rook &&
+      bd.keyAt(row, 5) == 'e' && bd.keyAt(row, 6) == 'e' &&
+      !bd.isAttacked(row, 5, !white) && !bd.isAttacked(row, 6, !white)) {
+    Move m{{row, 4}, {row, 6}};
+    m.settype1(key());
+    m.settype2(key());
+    m.setcastling();
+    out.push_back(m);
+  }
+  if ((rights & queenSide) && bd.keyAt(row, 0) == rook &&
+      bd.keyAt(row, 1) == 'e' && bd.keyAt(row, 2) == 'e' &&
+      bd.keyAt(row, 3) == 'e' && !bd.isAttacked(row, 3, !white) &&
+      !bd.isAttacked(row, 2, !white)) {
+    Move m{{row, 4}, {row, 2}};
+    m.settype1(key());
+    m.settype2(key());
+    m.setcastling();
+    out.push_back(m);
+  }
+}
 
 King::King(std::pair<int, int> coord, bool whiteTurn)
-    : Piece{coord, whiteTurn}, moved{false} {}
+    : Piece{coord, whiteTurn} {}
 
-bool King::isMove(const std::pair<int, int> &old_coord,
-                  const std::pair<int, int> &new_coord, Board &bd) const {
-  // Check single step moves
-  if (new_coord.first >= 8 || new_coord.first < 0 ||
-  new_coord.second >= 8 || new_coord.second < 0) {
-    return false;
-  }
-  if (isWhiteTurn() ==
-          bd.getPiece(new_coord.first, new_coord.second)->isWhiteTurn() &&
-      !bd.getPiece(new_coord.first, new_coord.second)->isEmptyPiece()) {
-    return false;
-  }
-
-  // diagonal movements
-  if (abs(new_coord.first - old_coord.first) == 1 &&
-      abs(new_coord.second - old_coord.second) == 1) {
-    return true;
-  }
-
-  if (abs(new_coord.first - old_coord.first) == 1 &&
-      abs(new_coord.second - old_coord.second) == 0) {
-    return true;
-  }
-
-  if (abs(new_coord.first - old_coord.first) == 0 &&
-      abs(new_coord.second - old_coord.second) == 1) {
-    return true;
-  }
-
-  // Check castle
-  int x = old_coord.first;
-  //int y = old_coord.second;
-
-  // NOTE: No need to consider players differently as initial setup is the same
-  if (!hasMoved() && (old_coord.first == new_coord.first)) {
-    if (((old_coord.second - new_coord.second) == 2) &&
-        tolower(bd.getPiece(x, 0)->key()) == 'r' &&
-        !bd.getPiece(x, 0)->hasMoved() &&
-        tolower(bd.getPiece(x, 1)->key()) == 'e' &&
-        tolower(bd.getPiece(x, 2)->key()) == 'e' &&
-        tolower(bd.getPiece(x, 3)->key()) == 'e') {
-      return true;
-    }
-    if (((new_coord.second - old_coord.second) == 2) &&
-        tolower(bd.getPiece(x, 7)->key()) == 'r' &&
-        !bd.getPiece(x, 7)->hasMoved() &&
-        tolower(bd.getPiece(x, 6)->key()) == 'e' &&
-        tolower(bd.getPiece(x, 5)->key()) == 'e') {
-      return true;
-    }
-  }
-
-  return false;
+std::unique_ptr<Piece> King::clone() const {
+  auto p = std::make_unique<King>(getCoord(), isWhiteTurn());
+  p->setMoved(hasMoved());
+  return p;
 }
-
-bool King::isEmptyPiece() const { return false; }
-
-char King::key() const {
-  if (isWhiteTurn()) {
-    return 'K';
-  }
-  return 'k';
-}
-
-bool King::hasMoved() const { return moved; }
-
-void King::setMoved() { moved = true; }

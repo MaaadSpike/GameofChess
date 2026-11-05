@@ -3,40 +3,56 @@
 
 #include <memory>
 #include <utility>
+#include <vector>
 
-class Board; // Forward Declaration of Board class -- two classes refer
-             // eachother
+class Board; // Board and Piece refer to each other
+class Move;
 
+// Abstract base of every piece (including the Empty "null piece").
+// Each concrete piece knows how it moves: possibleMoves() generates its
+// pseudo-legal moves (legal except that the own king may be left in check;
+// the Board filters those out).
 class Piece {
   std::pair<int, int> coordinate;
-  bool whiteTurn; // tell which side the piece belongs to;true means
-                  // white;flase, black
+  bool whiteTurn; // which side the piece belongs to; true = white
+  bool moved = false;
+
+protected:
+  bool isEnemy(char k) const; // is the piece key k an opponent piece?
+  void addTarget(const Board &bd, int r, int c, std::vector<Move> &out) const;
+  // Sliding pieces (rook / bishop / queen)
+  void slide(const Board &bd, const int dirs[][2], int ndirs,
+             std::vector<Move> &out, bool capturesOnly) const;
+  // Jumping pieces (knight / king single steps)
+  void jump(const Board &bd, const int offs[][2], int noffs,
+            std::vector<Move> &out, bool capturesOnly) const;
 
 public:
   Piece(std::pair<int, int> coord, bool whiteTurn);
+  virtual ~Piece() = default;
 
-  std::pair<int, int> getCoord() const; // return the position of the piece
-  void setCoord(const std::pair<int, int>
-                    &new_coord); // set the position of piece to new position
+  std::pair<int, int> getCoord() const { return coordinate; }
+  void setCoord(const std::pair<int, int> &c) { coordinate = c; }
+  bool isWhiteTurn() const { return whiteTurn; }
 
-  bool isWhiteTurn() const;
-
-  // FIX: Board should be const, refer to knight.cc
+  // Append this piece's pseudo-legal moves to out.
+  virtual void possibleMoves(const Board &bd, std::vector<Move> &out,
+                             bool capturesOnly = false) const = 0;
+  // Can this piece go from old_coord to new_coord (ignoring self-check)?
   virtual bool isMove(const std::pair<int, int> &old_coord,
                       const std::pair<int, int> &new_coord,
-                      Board &bd) const = 0; // tell whether the movment is valid
+                      const Board &bd) const;
 
-  // TODO
-  // Note : emptyPiece isnt necessary
-  //        better solution could be using key and checking if key = 'e'
-  virtual bool
-  isEmptyPiece() const = 0;     // tell whether the piece is empty piece
-  virtual char key() const = 0; // return the unique key assigned to the piece
+  virtual bool isEmptyPiece() const { return false; }
+  virtual char key() const = 0;   // 'K','q','e',...
+  virtual int value() const = 0;  // material value in centipawns
+  virtual std::unique_ptr<Piece> clone() const = 0;
 
-  // TODO
-  // Note: non virt?
-  virtual bool hasMoved() const; // tell whether the piece has moved or not
-  virtual void setMoved();       // set the move flag to true
+  bool hasMoved() const { return moved; }
+  void setMoved(bool m = true) { moved = m; }
+
+  // Factory: build a piece from its key ('e' gives an Empty)
+  static std::unique_ptr<Piece> create(char key, std::pair<int, int> coord);
 };
 
 #endif

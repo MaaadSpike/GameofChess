@@ -2,12 +2,11 @@
 #define LEVEL1_H
 
 #include "algorithm.h"
-#include "gamecontroller.h"
 
+// Level 1: plays a random legal move.
 class Level1 : public Algorithm {
 public:
-    // Override the calculateBestMove function with Level 1 specific logic
-    vector<Move> calculateBestMove(Gamecontroller& gameController, bool isWhite) override;
+  Move calculateBestMove(const Gamecontroller &gameController) override;
 };
 
 #endif // LEVEL1_H

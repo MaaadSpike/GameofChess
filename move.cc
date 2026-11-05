@@ -1,86 +1,44 @@
 #include "move.h"
-#include <iostream>
+#include <cctype>
 
-bool Move::iscasteld() {
-    return flag == "castling";
-}
+Move::Move(std::pair<int, int> from, std::pair<int, int> to)
+    : Npo{to}, Opo{from}, Cpo{to} {}
 
-bool Move::ispromoted() {
-    return flag == "promotion";
-}
-
-bool Move::isenpassant() {
-    return flag == "enpassant";
-}
-
-std::pair<int,int> Move::getNpo() const {
-    return Npo;
+std::string Move::getflag() const {
+  switch (flag) {
+  case Castling: return "castling";
+  case Promotion: return "promotion";
+  case EnPassant: return "enpassant";
+  default: return "normal";
+  }
 }
 
-std::pair<int,int> Move::getOpo() const {
-    return Opo;
+std::string Move::toString() const {
+  if (isNull()) return "(none)";
+  std::string s = squareName(Opo) + squareName(Npo);
+  if (flag == Promotion) s += static_cast<char>(std::tolower(type2));
+  return s;
 }
 
-std::pair<int,int> Move::getCpo() const {
-    return Cpo;
+bool Move::operator==(const Move &o) const {
+  if (Opo != o.Opo || Npo != o.Npo) return false;
+  if (flag == Promotion || o.flag == Promotion)
+    return std::tolower(type2) == std::tolower(o.type2);
+  return true;
 }
 
-char Move::gettype1(){
-    return type1;
-}
-char Move::gettype2(){
-    return type2;
-}
-char Move::gettype3(){
-    return type3;
-}
-std::string Move::getflag(){
-    return flag;
+std::string Move::squareName(const std::pair<int, int> &sq) {
+  std::string s;
+  s += static_cast<char>('a' + sq.second);
+  s += static_cast<char>('8' - sq.first);
+  return s;
 }
 
-void Move::setNpo(const std::pair<int, int>& p) {
-    Npo = p;
+bool Move::parseSquare(const std::string &s, std::pair<int, int> &out) {
+  if (s.size() != 2) return false;
+  char f = static_cast<char>(std::tolower(s[0]));
+  char r = s[1];
+  if (f < 'a' || f > 'h' || r < '1' || r > '8') return false;
+  out = {'8' - r, f - 'a'};
+  return true;
 }
-
-void Move::setOpo(const std::pair<int, int>& p) {
-    Opo = p;
-}
-
-void Move::setCpo(const std::pair<int, int>& p) {
-    Cpo = p;
-}
-
-void Move::settype1(const char& c) {
-    type1 = c;
-}
-
-void Move::settype2(const char& c) {
-    type2 = c;
-}
-
-void Move::settype3(const char& c) {
-    type3 = c;
-}
-
-void Move::setcastling() {
-    flag = "castling";
-}
-
-void Move::setpromotion() {
-    flag = "promotion";
-}
-
-void Move::setenpassant() {
-    flag = "promotion";
-}
-
-//std::istream & operator>>(std::istream & in, Move & m) {
-//    std::string s;
-//    std::getline(in, s);
-//    if (s.size() != )
-//    if (in >> type2) { // try to do an enpassant
-//        m.settype2(type2);
-//        m.setpromotion();
-//    }
-//    return in;
-//}

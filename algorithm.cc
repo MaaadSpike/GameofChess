@@ -1,329 +1,289 @@
 #include "algorithm.h"
-#include "gamecontroller.h"
-#include <ctime>
-#include <random>
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
+#include <cstdlib>
 
+namespace {
 
-std::vector<std::unique_ptr<Piece>> alivePieces(bool iswhite, const Board& bd) {
-    std::vector<std::unique_ptr<Piece>> alives;
-    if (iswhite) {
-        for (int i = 0; i < 8; i++) {
-            for (int j = 0; j < 8; j++) {
-                char c = bd.getPiece(i, j)->key();
-                if ('A' <= c && c <= 'Z' && c != 'K') {
-                    alives.emplace_back(bd.getPiece(i, j));
-                }
-            }
-        }
-        //std::cout << "I reach line 696" << std::endl;
-        return alives;
-    } else {
-        for (int i = 0; i < 8; i++) {
-            for (int j = 0; j < 8; j++) {
-                char c = bd.getPiece(i, j)->key();
-                if ('a' <= c && c <= 'z' && c != 'e' && c != 'k') {
-                    alives.emplace_back(bd.getPiece(i, j));
-                }
-            }
-        }
-        //std::cout << "I reach line 707 I have "<< alives.size() << " lives"<< std::endl;
-        return alives;
-    }
+// Piece-square tables (centipawns), written from White's point of view with
+// index 0 = a8 ... 63 = h1, i.e. exactly our (row * 8 + col) layout.
+// Black pieces use the vertically mirrored square.
+const int PAWN_PST[64] = {
+     0,  0,  0,  0,  0,  0,  0,  0,
+    50, 50, 50, 50, 50, 50, 50, 50,
+    10, 10, 20, 30, 30, 20, 10, 10,
+     5,  5, 10, 25, 25, 10,  5,  5,
+     0,  0,  0, 20, 20,  0,  0,  0,
+     5, -5,-10,  0,  0,-10, -5,  5,
+     5, 10, 10,-20,-20, 10, 10,  5,
+     0,  0,  0,  0,  0,  0,  0,  0};
+const int KNIGHT_PST[64] = {
+   -50,-40,-30,-30,-30,-30,-40,-50,
+   -40,-20,  0,  0,  0,  0,-20,-40,
+   -30,  0, 10, 15, 15, 10,  0,-30,
+   -30,  5, 15, 20, 20, 15,  5,-30,
+   -30,  0, 15, 20, 20, 15,  0,-30,
+   -30,  5, 10, 15, 15, 10,  5,-30,
+   -40,-20,  0,  5,  5,  0,-20,-40,
+   -50,-40,-30,-30,-30,-30,-40,-50};
+const int BISHOP_PST[64] = {
+   -20,-10,-10,-10,-10,-10,-10,-20,
+   -10,  0,  0,  0,  0,  0,  0,-10,
+   -10,  0,  5, 10, 10,  5,  0,-10,
+   -10,  5,  5, 10, 10,  5,  5,-10,
+   -10,  0, 10, 10, 10, 10,  0,-10,
+   -10, 10, 10, 10, 10, 10, 10,-10,
+   -10,  5,  0,  0,  0,  0,  5,-10,
+   -20,-10,-10,-10,-10,-10,-10,-20};
+const int ROOK_PST[64] = {
+     0,  0,  0,  0,  0,  0,  0,  0,
+     5, 10, 10, 10, 10, 10, 10,  5,
+    -5,  0,  0,  0,  0,  0,  0, -5,
+    -5,  0,  0,  0,  0,  0,  0, -5,
+    -5,  0,  0,  0,  0,  0,  0, -5,
+    -5,  0,  0,  0,  0,  0,  0, -5,
+    -5,  0,  0,  0,  0,  0,  0, -5,
+     0,  0,  0,  5,  5,  0,  0,  0};
+const int QUEEN_PST[64] = {
+   -20,-10,-10, -5, -5,-10,-10,-20,
+   -10,  0,  0,  0,  0,  0,  0,-10,
+   -10,  0,  5,  5,  5,  5,  0,-10,
+    -5,  0,  5,  5,  5,  5,  0, -5,
+     0,  0,  5,  5,  5,  5,  0, -5,
+   -10,  5,  5,  5,  5,  5,  0,-10,
+   -10,  0,  5,  0,  0,  0,  0,-10,
+   -20,-10,-10, -5, -5,-10,-10,-20};
+const int KING_MG_PST[64] = {
+   -30,-40,-40,-50,-50,-40,-40,-30,
+   -30,-40,-40,-50,-50,-40,-40,-30,
+   -30,-40,-40,-50,-50,-40,-40,-30,
+   -30,-40,-40,-50,-50,-40,-40,-30,
+   -20,-30,-30,-40,-40,-30,-30,-20,
+   -10,-20,-20,-20,-20,-20,-20,-10,
+    20, 20,  0,  0,  0,  0, 20, 20,
+    20, 30, 10,  0,  0, 10, 30, 20};
+const int KING_EG_PST[64] = {
+   -50,-40,-30,-20,-20,-30,-40,-50,
+   -30,-20,-10,  0,  0,-10,-20,-30,
+   -30,-10, 20, 30, 30, 20,-10,-30,
+   -30,-10, 30, 40, 40, 30,-10,-30,
+   -30,-10, 30, 40, 40, 30,-10,-30,
+   -30,-10, 20, 30, 30, 20,-10,-30,
+   -30,-30,  0,  0,  0,  0,-30,-30,
+   -50,-30,-30,-30,-30,-30,-30,-50};
+
+const int PASSED_MG[8] = {0, 5, 10, 18, 30, 50, 80, 0};
+const int PASSED_EG[8] = {0, 10, 20, 35, 60, 100, 150, 0};
+
+inline int centerDistance(int r, int c) {
+  int dr = r < 4 ? 3 - r : r - 4;
+  int dc = c < 4 ? 3 - c : c - 4;
+  return dr + dc; // 0 (centre) .. 6 (corner)
 }
 
-vector<Move> Algorithm::generateCheckResponseMoves(const vector<unique_ptr<Piece>>& pieces, const Gamecontroller& gc, bool isWhite) {
-    vector<Move> moves;
+} // namespace
 
-    Board board{*gc.bd};
-    // Find the king and the threatening pieces
-    Piece* king = board.getPiece(findKing(board, isWhite).first, findKing(board, isWhite).second).get();
-    vector<pair<int, int>> threateningPositions = getThreateningPieces(board, king);
-    vector<Piece*> threateningPieces;
+Algorithm::Algorithm() : rng{std::random_device{}()} {}
 
-    // Convert positions to Piece pointers
-    for (const auto& pos : threateningPositions) {
-        Piece* piece = board.getPiece(pos.first, pos.second).get();
-        if (piece != nullptr) {
-            threateningPieces.push_back(piece);
-        }
-    }
-
-    // Try to capture the threatening piece
-    // this only triggers under when threatenignPieces is one singel peice
-    if (threateningPieces.size() == 1) {
-        Piece* enemy = threateningPieces.front();
-        vector<Move> captureMoves = canPieceBeCaptured(pieces, enemy, gc, isWhite);
-        moves.insert(moves.end(), captureMoves.begin(), captureMoves.end());
-    }
-
-    // Try to block the check
-    if (threateningPieces.size() == 1) { // Check can only be blocked if there is a single threat
-        vector<Move> blockMoves;
-        std::vector<std::unique_ptr<Piece>> va = std::move(alivePieces(isWhite, board));
-        for (auto &it1:va) {
-            vector<Move> vp = gc.possiblemoves(it1);
-            for (auto it:vp) {
-                Board board1{*gc.bd};
-                board1.movePiece(it.getNpo().first, it.getNpo().second, 
-                board1.getPiece(it.getOpo().first, it.getOpo().second));
-                if (getThreateningPieces(board1, king).size() == 0) {
-                    blockMoves.emplace_back(it);
-                } 
-            }
-        }
-        moves.insert(moves.end(), blockMoves.begin(), blockMoves.end());
-    }
-
-    // Try to move the king to a safe square
-    vector<Move> kingMoves;
-    vector<Move> vk = gc.possiblemoves(board.getPiece(findKing(board, isWhite).first, 
-    findKing(board, isWhite).second));
-    for (auto it:vk) {
-        Board board1{*gc.bd};
-        board1.movePiece(it.getNpo().first, it.getNpo().second, 
-        board1.getPiece(it.getOpo().first, it.getOpo().second));
-        if (getThreateningPieces(board1, king).size() == 0) {
-            kingMoves.emplace_back(it);
-        } 
-    }
-    moves.insert(moves.end(), kingMoves.begin(), kingMoves.end());
-
-    return moves;
+Move Algorithm::selectRandomMove(const std::vector<Move> &moves) {
+  if (moves.empty()) return Move{};
+  std::uniform_int_distribution<size_t> dist(0, moves.size() - 1);
+  return moves[dist(rng)];
 }
 
-Move Algorithm::selectRandomMove(const vector<Move>& moves) {
-    if (moves.empty()) {
-        return Move(); // Handle no-move scenario (checkmate or stalemate)
-    }
-
-    std::mt19937 rng(std::random_device{}()); // Create a random number generator
-    std::vector<Move> mutableMoves = moves; // Make a copy of moves since we need to modify it
-    std::shuffle(mutableMoves.begin(), mutableMoves.end(), rng); // Shuffle the copy
-
-    return mutableMoves.front(); // Return the first move after shuffling
+int Algorithm::pieceValue(char pieceType) {
+  switch (std::tolower(static_cast<unsigned char>(pieceType))) {
+  case 'p': return 100;
+  case 'n': return 320;
+  case 'b': return 330;
+  case 'r': return 500;
+  case 'q': return 900;
+  default: return 0;
+  }
 }
 
-
-pair<int, int> Algorithm::findKing(const Board& bd, bool isWhite) {
-    if (isWhite) {
-        for (int i = 0;i < 8; i++) {
-            for (int j = 0; j < 8; j++) {
-                if (bd.getPiece(i,j)->key() == 'K' &&
-                bd.getPiece(i,j)->isWhiteTurn()) {
-                    return std::pair<int,int>{i,j};
-                }
-            }
-        }
-    } else {
-         for (int i = 0;i < 8; i++) {
-            for (int j = 0; j < 8; j++) {
-                if (bd.getPiece(i,j)->key() == 'k' &&
-                !bd.getPiece(i,j)->isWhiteTurn()) {
-                    return std::pair<int,int>{i,j};
-                }
-            }
-        }
-    }
-    return std::pair<int,int>{-1,-1};
+bool Algorithm::givesCheck(Board &bd, const Move &m) {
+  bd.makeMove(m);
+  bool chk = bd.inCheck();
+  bd.undoMove();
+  return chk;
 }
 
-vector<pair<int, int>> Algorithm::getThreateningPieces(const Board& bd, bool isWhite) {
-    std::vector<std::pair<int, int>> threateningPieces;
-
-    // Find the king's position first
-    std::pair<int, int> kingPos = findKing(bd, isWhite);
-
-    // Check if the king's position is valid
-    if (kingPos.first == -1 && kingPos.second == -1) {
-        return threateningPieces; // King not found or invalid position
-    }
-
-    // Iterate over the board to find threatening pieces
-    for (int x = 0; x < 8; ++x) {
-        for (int y = 0; y < 8; ++y) {
-            if (isThreateningPiece(bd, x, y, kingPos, isWhite)) {
-                threateningPieces.emplace_back(x, y);
-            }
-        }
-    }
-
-    return threateningPieces;
+bool Algorithm::isCheckmateMove(Board &bd, const Move &m) {
+  bd.makeMove(m);
+  bool mate = bd.inCheck() && !bd.hasLegalMove();
+  bd.undoMove();
+  return mate;
 }
 
-bool Algorithm::isThreateningPiece(const Board& bd, int x, int y, std::pair<int, int> kingPos, bool isWhite) {
-    std::unique_ptr<Piece> piece = bd.getPiece(x, y);
-
-    // Skip empty squares or pieces of the same color as the current player
-    if (piece->isEmptyPiece() || (isWhite == piece->isWhiteTurn())) {
-        return false;
-    }
-
-    char pieceKey = piece->key();
-    bool isPieceWhite = isupper(pieceKey);
-
-    // Check for each piece type
-    if (tolower(pieceKey) == 'q') {
-        // Queen can move diagonally, vertically, horizontally
-        if (canReachKing(bd, x, y, kingPos, true, true)) {
-            return true;
-        }
-    } else if (tolower(pieceKey) == 'b') {
-        // Bishop moves diagonally
-        if (canReachKing(bd, x, y, kingPos, true, false)) {
-            return true;
-        }
-    } else if (tolower(pieceKey) == 'r') {
-        // Rook moves vertically, horizontally
-        if (canReachKing(bd, x, y, kingPos, false, true)) {
-            return true;
-        }
-    } else if (tolower(pieceKey) == 'n') {
-        // Knight's potential moves
-        std::vector<std::pair<int, int>> knightMoves = {
-            {x + 2, y + 1}, {x + 2, y - 1},
-            {x - 2, y + 1}, {x - 2, y - 1},
-            {x + 1, y + 2}, {x + 1, y - 2},
-            {x - 1, y + 2}, {x - 1, y - 2}
-        };
-
-        for (const auto& move : knightMoves) {
-            if (move == kingPos) {
-                return true;
-            }
-        }
-    } else if (tolower(pieceKey) == 'p') {
-        //need to reconsider through pawn later with grou p meeting
-        // Pawn's capture moves
-        std::vector<std::pair<int, int>> pawnAttacks;
-        if (isPieceWhite) { // Assuming white pawns are at the bottom
-            pawnAttacks = {{x - 1, y - 1}, {x - 1, y + 1}};
-        } else {
-            pawnAttacks = {{x + 1, y - 1}, {x + 1, y + 1}};
-        }
-
-        for (const auto& attack : pawnAttacks) {
-            if (attack == kingPos) {
-                return true;
-            }
-        }
-    }
-
-    return false;
+std::string Algorithm::formatScore(int cp) {
+  if (cp >= 90000 || cp <= -90000) {
+    int plies = 100000 - std::abs(cp);
+    int moves = (plies + 1) / 2;
+    return std::string(cp > 0 ? "White" : "Black") + " mates in " + std::to_string(moves);
+  }
+  char buf[32];
+  std::snprintf(buf, sizeof buf, "%+.2f", cp / 100.0);
+  return buf;
 }
 
-//cehck can reach king
-bool Algorithm::canReachKing(const Board& bd, int x, int y, std::pair<int, int> kingPos, bool checkDiagonal, bool checkStraight) {
-    // Check straight lines (for Rooks and Queens)
-    if (checkStraight) {
-        if (canReachKingStraight(bd, x, y, kingPos)) {
-            return true;
-        }
+// Tapered evaluation: material + piece-square tables + pawn structure +
+// rook files + bishop pair + king shelter + endgame "mop-up" knowledge.
+int Algorithm::evaluate(const Board &bd) {
+  int mg[2] = {0, 0}, eg[2] = {0, 0}; // [0] black, [1] white
+  int phase = 0;
+  int bishops[2] = {0, 0};
+  int nonPawn[2] = {0, 0};
+  int pawnCount[2] = {0, 0};
+  int pawnsOnFile[2][8] = {{0}};
+  int minPawnRow[2][8], maxPawnRow[2][8];
+  std::pair<int, int> king[2] = {{-1, -1}, {-1, -1}};
+  for (int f = 0; f < 8; ++f) {
+    minPawnRow[0][f] = minPawnRow[1][f] = 8;
+    maxPawnRow[0][f] = maxPawnRow[1][f] = -1;
+  }
+
+  for (int r = 0; r < 8; ++r)
+    for (int c = 0; c < 8; ++c) {
+      char k = bd.keyAt(r, c);
+      if (k == 'e') continue;
+      const int side = std::isupper(static_cast<unsigned char>(k)) ? 1 : 0;
+      const int sq = side ? r * 8 + c : (7 - r) * 8 + c;
+      switch (std::tolower(static_cast<unsigned char>(k))) {
+      case 'p':
+        mg[side] += 100 + PAWN_PST[sq];
+        eg[side] += 110 + PAWN_PST[sq] / 2;
+        ++pawnCount[side];
+        ++pawnsOnFile[side][c];
+        minPawnRow[side][c] = std::min(minPawnRow[side][c], r);
+        maxPawnRow[side][c] = std::max(maxPawnRow[side][c], r);
+        break;
+      case 'n':
+        mg[side] += 320 + KNIGHT_PST[sq];
+        eg[side] += 310 + KNIGHT_PST[sq];
+        phase += 1;
+        nonPawn[side] += 320;
+        break;
+      case 'b':
+        mg[side] += 330 + BISHOP_PST[sq];
+        eg[side] += 330 + BISHOP_PST[sq];
+        phase += 1;
+        ++bishops[side];
+        nonPawn[side] += 330;
+        break;
+      case 'r':
+        mg[side] += 500 + ROOK_PST[sq];
+        eg[side] += 520 + ROOK_PST[sq];
+        phase += 2;
+        nonPawn[side] += 500;
+        break;
+      case 'q':
+        mg[side] += 900 + QUEEN_PST[sq];
+        eg[side] += 940 + QUEEN_PST[sq];
+        phase += 4;
+        nonPawn[side] += 900;
+        break;
+      case 'k':
+        mg[side] += KING_MG_PST[sq];
+        eg[side] += KING_EG_PST[sq];
+        king[side] = {r, c};
+        break;
+      }
     }
 
-    // Check diagonals (for Bishops and Queens)
-    if (checkDiagonal) {
-        if (canReachKingDiagonal(bd, x, y, kingPos)) {
-            return true;
+  // Pawn structure: doubled, isolated, passed pawns.
+  for (int side = 0; side < 2; ++side) {
+    const int enemy = 1 - side;
+    for (int f = 0; f < 8; ++f) {
+      const int n = pawnsOnFile[side][f];
+      if (n == 0) continue;
+      if (n > 1) {
+        mg[side] -= 12 * (n - 1);
+        eg[side] -= 20 * (n - 1);
+      }
+      const bool left = f > 0 && pawnsOnFile[side][f - 1] > 0;
+      const bool right = f < 7 && pawnsOnFile[side][f + 1] > 0;
+      if (!left && !right) {
+        mg[side] -= 10 * n;
+        eg[side] -= 15 * n;
+      }
+      // Passed pawn: look at the most advanced pawn on this file.
+      const int r = side ? minPawnRow[1][f] : maxPawnRow[0][f];
+      bool passed = true;
+      for (int ff = std::max(0, f - 1); ff <= std::min(7, f + 1) && passed; ++ff) {
+        if (side) { // white pawn at row r: blocked by black pawns with row < r
+          if (minPawnRow[enemy][ff] < r) passed = false;
+        } else {    // black pawn at row r: blocked by white pawns with row > r
+          if (maxPawnRow[enemy][ff] > r) passed = false;
         }
+      }
+      if (passed) {
+        const int adv = side ? 7 - r : r; // 1..6 ranks advanced
+        mg[side] += PASSED_MG[adv];
+        eg[side] += PASSED_EG[adv];
+      }
+    }
+  }
+
+  // Rooks on open / half-open files.
+  for (int r = 0; r < 8; ++r)
+    for (int c = 0; c < 8; ++c) {
+      char k = bd.keyAt(r, c);
+      if (k != 'R' && k != 'r') continue;
+      const int side = k == 'R' ? 1 : 0;
+      if (pawnsOnFile[side][c] == 0) {
+        const int bonus = pawnsOnFile[1 - side][c] == 0 ? 20 : 10;
+        mg[side] += bonus;
+        eg[side] += bonus / 2;
+      }
     }
 
-    return false;
+  // Bishop pair.
+  for (int side = 0; side < 2; ++side)
+    if (bishops[side] >= 2) {
+      mg[side] += 30;
+      eg[side] += 50;
+    }
+
+  // King shelter (middlegame): pawns in front of a castled king.
+  for (int side = 0; side < 2; ++side) {
+    const auto kp = king[side];
+    if (kp.first < 0) continue;
+    const int homeRow = side ? 7 : 0;
+    const int dir = side ? -1 : 1;
+    if (kp.first != homeRow || (kp.second >= 3 && kp.second <= 4)) continue;
+    const char pawn = side ? 'P' : 'p';
+    int shield = 0;
+    for (int c = std::max(0, kp.second - 1); c <= std::min(7, kp.second + 1); ++c) {
+      if (bd.keyAt(homeRow + dir, c) == pawn) shield += 12;
+      else if (bd.keyAt(homeRow + 2 * dir, c) == pawn) shield += 6;
+      else shield -= 10;
+    }
+    mg[side] += shield;
+  }
+
+  // Mop-up: with a decisive material edge and no enemy pawns, drive the
+  // enemy king to the edge and bring our king closer (helps finish mates).
+  for (int side = 0; side < 2; ++side) {
+    const int enemy = 1 - side;
+    if (pawnCount[enemy] == 0 && king[0].first >= 0 && king[1].first >= 0 &&
+        nonPawn[side] - nonPawn[enemy] >= 400) {
+      const auto ek = king[enemy], ok = king[side];
+      const int dist = std::abs(ek.first - ok.first) + std::abs(ek.second - ok.second);
+      eg[side] += 10 * centerDistance(ek.first, ek.second) + 4 * (14 - dist);
+    }
+  }
+
+  phase = std::min(phase, 24);
+  const int mgScore = mg[1] - mg[0];
+  const int egScore = eg[1] - eg[0];
+  int score = (mgScore * phase + egScore * (24 - phase)) / 24;
+
+  // Without pawns, a small material edge (e.g. a lone minor piece) can't win.
+  if (pawnCount[1] == 0 && score > 0 && nonPawn[1] - nonPawn[0] < 400) score /= 4;
+  if (pawnCount[0] == 0 && score < 0 && nonPawn[0] - nonPawn[1] < 400) score /= 4;
+
+  score += bd.whiteToMove() ? 10 : -10; // tempo
+  return bd.whiteToMove() ? score : -score;
 }
-//helper fucntions to canreachkign straight and horizontal
-bool Algorithm::canReachKingStraight(const Board& bd, int x, int y, std::pair<int, int> kingPos) {
-    // Check horizontally
-    if (x == kingPos.first) {
-        int min_y = std::min(y, kingPos.second);
-        int max_y = std::max(y, kingPos.second);
-        for (int i = min_y + 1; i < max_y; ++i) {
-            if (bd.getPiece(x, i)) { // Check if there is an obstruction
-                return false;
-            }
-        }
-        return true;
-    }
-
-    // Check vertically
-    if (y == kingPos.second) {
-        int min_x = std::min(x, kingPos.first);
-        int max_x = std::max(x, kingPos.first);
-        for (int i = min_x + 1; i < max_x; ++i) {
-            if (bd.getPiece(i, y)) { // Check if there is an obstruction
-                return false;
-            }
-        }
-        return true;
-    }
-
-    return false;
-}
-
-bool Algorithm::canReachKingDiagonal(const Board& bd, int x, int y, std::pair<int, int> kingPos) {
-    // Calculate differences
-    int dx = kingPos.first - x;
-    int dy = kingPos.second - y;
-
-    // Check if the move is diagonal
-    if (abs(dx) == abs(dy)) {
-        int stepX = (dx > 0) ? 1 : -1;
-        int stepY = (dy > 0) ? 1 : -1;
-
-        // Check each square along the diagonal for obstructions
-        int curX = x + stepX;
-        int curY = y + stepY;
-        while (curX != kingPos.first && curY != kingPos.second) {
-            if (bd.getPiece(curX, curY)) { // Check if there is an obstruction
-                return false;
-            }
-            curX += stepX;
-            curY += stepY;
-        }
-        return true;
-    }
-
-    return false;
-}
-
-vector<Move> Algorithm::canPieceBeCaptured(const vector<unique_ptr<Piece>>& pieces, Piece* threateningPiece, const Gamecontroller& gameController, bool isWhite) {
-    vector<Move> captureMoves;
-
-    for (const auto& piece : pieces) {
-        // Skip if it's the king or a piece of the opposite color
-        if (tolower(piece->isWhiteTurn()) == 'k' || piece->isWhiteTurn() != isWhite) {
-            continue;
-        }
-
-        // Get all possible capturing moves for the piece
-        vector<Move> potentialCaptureMoves = captureMove(piece, threateningPiece, gameController);
-
-        // Check each potential capture move for validity
-        for (const auto& move : potentialCaptureMoves) {
-            captureMoves.push_back(move); // Add to the list of capture moves
-        }
-    }
-
-    return captureMoves;
-}
-
-vector<Move> Algorithm::captureMove(const unique_ptr<Piece>& capturingPiece, const Piece* targetPiece, const Gamecontroller& gameController) {
-    vector<Move> captureMoves;
-
-    // Get all possible moves for the capturing piece
-    vector<Move> possibleMoves = gameController.possiblemoves(capturingPiece);
-
-    // Filter moves to find those that capture the target piece
-    for (const auto& move : possibleMoves) {
-        if (move.getNpo() == targetPiece->getCoord()) {
-            //idk if getposition function is valid
-            captureMoves.push_back(move);
-        }
-    }
-
-    return captureMoves;
-}
-
-
-
-
-
-

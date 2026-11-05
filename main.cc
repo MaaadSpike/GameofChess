@@ -2,189 +2,214 @@
 #include "gamecontroller.h"
 #include "human.h"
 #include "player.h"
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <sstream>
 #include <string>
+#include <vector>
 
-std::unique_ptr<Player> createPlayer(std::string s, bool isWhite) {
-  std::unique_ptr<Player> p;
-  std::string level;
-  if (s == "human") {
-    p = std::make_unique<Human>(0, isWhite);
-    // p->setId(0);
-  } else if (s == "computer1") {
-    level = "level1";
-    p = std::make_unique<Computer>(1, isWhite, level);
-    // p->setId(1);
-  } else if (s == "computer2") {
-    level = "level2";
-    p = std::make_unique<Computer>(2, isWhite, level);
-    // p->setId(2);
-  } else if (s == "computer3") {
-    level = "level3";
-    p = std::make_unique<Computer>(3, isWhite, level);
-    // p->setId(3);
-  } else {
-    level = "level4";
-    p = std::make_unique<Computer>(4, isWhite, level);
-    // p->setId(4);
-  }
-  return p;
+namespace {
+
+std::string lower(std::string s) {
+  for (char &c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return s;
 }
 
-bool checkvalid(std::string s) { // for move only
-  if (s.size() != 2 || !('a' <= s[0] && s[0] <= 'h') ||
-      !('1' <= s[1] && s[1] <= '8')) {
+// "human", "computer1".."computer4", also "computer[2]" / "computer 2" style.
+std::unique_ptr<Player> createPlayer(std::string s, bool isWhite) {
+  s = lower(s);
+  std::string digits;
+  for (char c : s)
+    if (std::isdigit(static_cast<unsigned char>(c))) digits += c;
+  std::string word;
+  for (char c : s)
+    if (std::isalpha(static_cast<unsigned char>(c))) word += c;
+  if (word == "human" && digits.empty()) return std::make_unique<Human>(0, isWhite);
+  if (word == "computer") {
+    int level = digits.empty() ? 4 : std::atoi(digits.c_str());
+    if (level < 1 || level > 4) return nullptr;
+    return std::make_unique<Computer>(level, isWhite, "level" + std::to_string(level));
+  }
+  return nullptr;
+}
+
+void printHelp(bool bonus) {
+  std::cout <<
+      "Commands:\n"
+      "  game <white> <black>   start a game; players: human, computer1 .. computer4\n"
+      "  move <from> <to> [P]   e.g. move e2 e4, move e7 e8 Q (promotion piece optional,\n"
+      "                         defaults to a queen); 'move e2e4' also works\n"
+      "  move                   let the computer play when it is its turn\n"
+      "  play                   computer vs computer: play the game to the end\n"
+      "  resign                 concede the current game\n"
+      "  setup                  set up a custom position (before a game):\n"
+      "                           + K e1   place a piece    - e1      remove a piece\n"
+      "                           = black  side to move     default   standard position\n"
+      "                           clear    empty board      done      leave setup mode\n"
+      "  board                  print the board again\n";
+  if (bonus)
+    std::cout << "  undo / redo            take back / replay moves\n"
+                 "  hint                   ask the engine for a suggestion\n";
+  else
+    std::cout << "  (start with -enablebonus for undo / redo / hint)\n";
+  std::cout << "  help                   this message\n"
+               "  quit                   (or Ctrl-D) print the final score and exit\n";
+}
+
+void usage(const char *prog) {
+  std::cerr << "usage: " << prog << " [-enablebonus] [-text] [-time <ms>]\n"
+            << "  -enablebonus   enable undo / redo / hint\n"
+            << "  -text          text only (no graphics window)\n"
+            << "  -time <ms>     thinking time of computer4 per move (default 1200)\n";
+}
+
+bool parseHumanMove(const std::vector<std::string> &args, Move &m) {
+  std::string from, to, promo;
+  if (args.size() == 1 && (args[0].size() == 4 || args[0].size() == 5)) {
+    from = args[0].substr(0, 2);
+    to = args[0].substr(2, 2);
+    if (args[0].size() == 5) promo = args[0].substr(4, 1);
+  } else if (args.size() == 2 || args.size() == 3) {
+    from = args[0];
+    to = args[1];
+    if (args.size() == 3) promo = args[2];
+  } else {
     return false;
   }
+  std::pair<int, int> f, t;
+  if (!Move::parseSquare(from, f) || !Move::parseSquare(to, t)) return false;
+  if (promo.size() > 1) return false;
+  m.setOpo(f);
+  m.setNpo(t);
+  m.settype2(promo.empty() ? 'e' : promo[0]);
   return true;
 }
 
-std::pair<int, int> stopair(const std::string s) { // for move only
-  int x = 7 - (s[1] - '0' - 1);
-  int y = s[0] - 'a';
-  std::pair<int, int> p{x, y};
-  return p;
-}
+} // namespace
 
 int main(int argc, char *argv[]) {
-  std::unique_ptr<Gamecontroller> gc;
-  if (argc == 1) {
-    gc = std::make_unique<Gamecontroller>(false);
-  } else if (argc == 2 && std::string{argv[1]} == "-enablebonus") {
-    gc = std::make_unique<Gamecontroller>(true);
-  } else {
-    std::cerr << "chess [none] or [-enablebonus]" << std::endl;
-    return 1;
+  bool bonus = false, graphics = true;
+  int thinkMs = 1200;
+  for (int i = 1; i < argc; ++i) {
+    std::string a = argv[i];
+    if (a == "-enablebonus") bonus = true;
+    else if (a == "-text" || a == "-nographics") graphics = false;
+    else if (a == "-time" && i + 1 < argc) thinkMs = std::max(50, std::atoi(argv[++i]));
+    else {
+      usage(argv[0]);
+      return 1;
+    }
   }
-  bool gamestarted = false;
-  std::string command;
 
-  while (1) {
-    if (gamestarted && gc->whomakethisstep() >= 1) {
-      std::cout << "computer moves" << std::endl;
-      gc->computermakemove();
-    }
-    if (!(std::cin >> command)) {
-      break;
-    }
+  Gamecontroller gc{bonus, graphics, thinkMs};
+  std::cout << "Chess - type 'help' for commands, e.g.  game human computer4" << std::endl;
+
+  // In human-vs-computer games the computer answers immediately.
+  auto autoplay = [&gc]() {
+    while (gc.gameRunning() && gc.isComputerTurn() && gc.hasHuman()) gc.computermakemove();
+  };
+
+  std::string line;
+  while (std::getline(std::cin, line)) {
+    std::istringstream iss{line};
+    std::string command;
+    if (!(iss >> command)) continue;
+    command = lower(command);
+    std::vector<std::string> args;
+    for (std::string a; iss >> a;) args.push_back(a);
+
     if (command == "game") {
-      std::string s1;
-      std::string s2;
-      if (std::cin >> s1 >> s2) {
-        std::vector<std::unique_ptr<Player>> players;
-        players.emplace_back(createPlayer(s1, true));
-        players.emplace_back(createPlayer(s2, false));
-        gc->initializeGame(std::move(players));
-        gamestarted = true;
-      } else {
-        std::cerr << "Invalid player" << std::endl;
-      }
-      continue;
-    }
-
-    if (gamestarted == false) { // we have to set players
-      std::cout << "You haven't settle players" << std::endl;
-      continue;
-    }
-
-    if (command == "resign") {
-      std::cout << "you resign this game, Please start a new game" << std::endl;
-      gamestarted = false;
-      // FIX: resign should increment scoreboard by 1
-      gc->handleResign();
-      continue;
-    }
-
-    if (gc->ischeckmate()) {
-      // updatesb
-      gamestarted = false;
-      std::cout << "please start a new game" << std::endl;
-      continue;
-    }
-
-    // if (gc->whomakethisstep() >= 1) {
-    //   std::cout << "computer moves" << std::endl;
-    //     gc->computermakemove();
-    // }
-
-    if (gc->whomakethisstep() == 0 && (command == "move")) {
-      std::string s;
-      std::getline(std::cin, s);
-      Move m;
-      if (s.size() == 6) {
-        std::istringstream iss{s};
-        std::string s1;
-        std::string s2;
-        iss >> s1 >> s2;
-        if (!checkvalid(s1) || !checkvalid(s2)) {
-          std::cout << "Invalid move1" << std::endl;
-          continue;
-        }
-        m.setOpo(stopair(s1));
-        m.setNpo(stopair(s2));
-      } else if (s.size() == 8) {
-        std::istringstream iss{s};
-        std::string s1;
-        std::string s2;
-        char c;
-        // FIX: must get input before cond
-        iss >> s1 >> s2 >> c;
-        if (c == 'k' || c == 'K') {
-          std::cout << "You cannot change to King" << std::endl;
-          continue;
-        }
-        // FIX: Pond promotion to other team
-        if ((!checkvalid(s1) || !checkvalid(s2) ||
-             !(c == 'r' || c == 'b' || c == 'n' || c == 'q')) &&
-            gc->curTurn() == "Black") {
-          std::cout << "Invalid move2" << std::endl;
-          continue;
-        }
-        // FIX: Pond promotion to other team
-        if ((!checkvalid(s1) || !checkvalid(s2) ||
-             !(c == 'R' || c == 'B' || c == 'N' || c == 'Q')) &&
-            gc->curTurn() == "White") {
-          std::cout << "Invalid move2" << std::endl;
-          continue;
-        }
-
-        m.setOpo(stopair(s1));
-        m.setNpo(stopair(s2));
-        m.settype2(c);
-      } else {
-        std::cout << "Invalid move3" << std::endl;
+      if (gc.gameRunning()) {
+        std::cout << "A game is already in progress - resign it first." << std::endl;
         continue;
       }
-      // std::cout << "this move is from (" << m.getOpo().first <<
-      // m.getOpo().second << ") to (" << m.getNpo().first << m.getNpo().second
-      // << ")" << std::endl;
-
-      gc->makeMove(m);
-      continue;
-    }
-
-    // std::cout << "I reach line 83" << std::endl;
-    if (command == "setup") {
-      // FIX: set board to empty board
-      gc->makeboardblank();
-
-      std::string s;
-      while (1) {
-        std::getline(std::cin, s);
-        if (s == "done") {
-          if (gc->validsetupboard()) {
-            break;
-          }
-          // FIX: check if the board is valid
-          std::cout << "Invalid board" << '\n';
-          continue;
-        }
-        gc->setupboard(s);
+      if (args.size() != 2) {
+        std::cout << "Usage: game <white> <black>   (human, computer1 .. computer4)" << std::endl;
+        continue;
       }
-      continue;
+      std::vector<std::unique_ptr<Player>> players;
+      players.emplace_back(createPlayer(args[0], true));
+      players.emplace_back(createPlayer(args[1], false));
+      if (!players[0] || !players[1]) {
+        std::cout << "Invalid player. Use human or computer1 .. computer4." << std::endl;
+        continue;
+      }
+      gc.initializeGame(std::move(players));
+      autoplay();
+    } else if (command == "move") {
+      if (!gc.gameRunning()) {
+        std::cout << "No game in progress. Start one with: game <white> <black>" << std::endl;
+        continue;
+      }
+      if (gc.isComputerTurn()) {
+        if (!args.empty())
+          std::cout << "It is the computer's turn - type 'move' to let it play." << std::endl;
+        else
+          gc.computermakemove();
+        autoplay();
+        continue;
+      }
+      Move m;
+      if (!parseHumanMove(args, m)) {
+        std::cout << "Usage: move <from> <to> [promotion]   e.g. move e2 e4" << std::endl;
+        continue;
+      }
+      if (gc.makeMove(m)) autoplay();
+    } else if (command == "play") {
+      if (!gc.gameRunning()) {
+        std::cout << "No game in progress." << std::endl;
+      } else if (gc.hasHuman()) {
+        std::cout << "'play' runs computer-vs-computer games; use 'move' instead." << std::endl;
+      } else {
+        while (gc.gameRunning()) gc.computermakemove();
+      }
+    } else if (command == "resign") {
+      gc.handleResign();
+    } else if (command == "setup") {
+      if (!gc.canSetup()) {
+        std::cout << "Finish (or resign) the current game before entering setup mode."
+                  << std::endl;
+        continue;
+      }
+      gc.beginSetup();
+      bool done = false;
+      while (!done && std::getline(std::cin, line)) {
+        std::istringstream ls{line};
+        std::string first;
+        if (!(ls >> first)) continue;
+        if (lower(first) == "done") {
+          if (gc.validsetupboard()) {
+            gc.endSetup();
+            done = true;
+          }
+        } else if (lower(first) == "help") {
+          std::cout << "+ K e1 | - e1 | = white/black | default | clear | done" << std::endl;
+        } else {
+          gc.setupboard(line);
+        }
+      }
+      if (!done) break; // input ended inside setup mode
+    } else if (command == "undo") {
+      gc.undo();
+    } else if (command == "redo") {
+      gc.redo();
+      autoplay();
+    } else if (command == "hint") {
+      gc.hint();
+    } else if (command == "board" || command == "print") {
+      gc.printBoard();
+    } else if (command == "help") {
+      printHelp(gc.cheatsEnabled());
+    } else if (command == "quit" || command == "exit") {
+      break;
+    } else {
+      std::cout << "Unknown command '" << command << "'. Type 'help' for the list of commands."
+                << std::endl;
     }
   }
-  gc->callprintsb();
+  gc.callprintsb();
+  return 0;
 }

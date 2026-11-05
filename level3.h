@@ -2,19 +2,17 @@
 #define _LEVEL3_H
 
 #include "algorithm.h"
-#include <vector>
 
+// Level 3: prefers avoiding capture, capturing moves, and checks.
+// Implemented as a 2-ply search (its move + the opponent's best reply)
+// followed by a capture-only "quiescence" search, so it sees hanging pieces
+// and simple exchanges, plus a little randomness for variety.
 class Level3 : public Algorithm {
+  int quiesce(Board &bd, int alpha, int beta, int ply);
+  int reply(Board &bd, int alpha, int beta);
+
 public:
-
-    // Override the calculateBestMove function with Level 3 specific logic
-    std::vector<Move> calculateBestMove(Gamecontroller& gameController, bool isWhite) override;
-
-private:
-    // Additional Level3 specific helper methods
-    bool moveAvoidsCapture(const Move& move, Gamecontroller& gameController);
-    bool moveCapturesOpponent(const Move& move, const Board& board);
-    bool moveGivesCheck(const Move& move, Gamecontroller& gameController);
+  Move calculateBestMove(const Gamecontroller &gameController) override;
 };
 
-#endif // LEVEL3_H
+#endif // _LEVEL3_H

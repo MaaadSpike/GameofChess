@@ -1,36 +1,30 @@
-//computer.h
+#ifndef COMPUTER_H
+#define COMPUTER_H
 
-#include "player.h"
 #include "algorithm.h"
-#include "gamecontroller.h"
+#include "player.h"
+#include <memory>
 #include <string>
 
-// Forward declaration
-class GameController;
+class Gamecontroller;
 
+// A computer player delegates move choice to an Algorithm (strategy pattern):
+// level1 random, level2 captures/checks, level3 short search, level4 engine.
 class Computer : public Player {
-private:
-    std::string difficultyLevel;
-    Algorithm* algorithm; // Pointer to an instance of a class derived from Algorithm
-    
+  std::string difficultyLevel;
+  std::unique_ptr<Algorithm> algorithm;
+
 public:
-    // Constructor
-    //Computer();
-    Computer(int id, bool isWhite, const std::string& difficultyLevel) : Player(id, isWhite), difficultyLevel(difficultyLevel), algorithm(nullptr) {
-    setDifficulty(difficultyLevel);
-}
+  Computer(int id, bool isWhite, const std::string &difficultyLevel);
+  ~Computer() override;
 
-    // Override the virtual makeMove method from Player
-    //virtual bool makeMove(GameController& gameController, const Move& move) override;
+  bool isHuman() const override { return false; }
+  void setDifficulty(const std::string &level) override;
+  std::string describe() const override { return "computer" + std::to_string(id); }
 
-    // Set the difficulty level and appropriate algorithm
-    void setDifficulty(const std::string& level) override;
-
-    //funciton that decides the move ultimately:
-    Move decideMove(Gamecontroller& gameController);
-
-    // Destructor
-    //virtual ~Computer();
-    ~Computer();
-    // Additional methods as needed
+  // Decide (but do not play) the move for the current position.
+  Move decideMove(const Gamecontroller &gameController);
+  const std::string &lastInfo() const { return algorithm->lastInfo(); }
 };
+
+#endif // COMPUTER_H

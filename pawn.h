@@ -3,19 +3,13 @@
 #include "piece.h"
 
 class Pawn : public Piece {
-  bool moved; // tell whether the piece has moved from its original position
 public:
   Pawn(std::pair<int, int> coord, bool whiteTurn);
-
-  bool isMove(const std::pair<int, int> &old_coord,
-              const std::pair<int, int> &new_coord,
-              Board &bd) const override; // tell whether the movment is valid
-
-  bool isEmptyPiece() const override; // tell whether the piece is empty piece
-  char key() const override;          // return the type of the piece
-
-  bool hasMoved() const override; // tell whether the piece has moved or not
-  void setMoved() override;       // set the move flag to true
+  void possibleMoves(const Board &bd, std::vector<Move> &out,
+                     bool capturesOnly = false) const override;
+  char key() const override { return isWhiteTurn() ? 'P' : 'p'; }
+  int value() const override { return 100; }
+  std::unique_ptr<Piece> clone() const override;
 };
 
 #endif

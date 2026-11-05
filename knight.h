@@ -5,11 +5,11 @@
 class Knight : public Piece {
 public:
   Knight(std::pair<int, int> coord, bool whiteTurn);
-  bool isMove(const std::pair<int, int> &old_coord,
-              const std::pair<int, int> &new_coord,
-              Board &bd) const override; // tell whether the movment is valid
-  bool isEmptyPiece() const override; // tell whether the piece is empty piece
-  char key() const override;          // return the type of the piece
+  void possibleMoves(const Board &bd, std::vector<Move> &out,
+                     bool capturesOnly = false) const override;
+  char key() const override { return isWhiteTurn() ? 'N' : 'n'; }
+  int value() const override { return 320; }
+  std::unique_ptr<Piece> clone() const override;
 };
 
 #endif

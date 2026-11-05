@@ -1,34 +1,37 @@
 #ifndef _ALGORITHM_H
 #define _ALGORITHM_H
 
-//Forward declarations
-class Computer;
-class Move;
-class Piece;
-class Gamecontroller;
-class Move;
-class board;
-
-//#include "computer.h"
 #include "board.h"
 #include "move.h"
+#include <random>
+#include <string>
+#include <vector>
 
-using namespace std;
+class Gamecontroller;
 
+// Strategy interface for computer players (Level1 ... Level4).
 class Algorithm {
+protected:
+  std::mt19937 rng;
+  std::string info; // short description of the last decision (depth, eval...)
+
 public:
-    virtual vector<Move> calculateBestMove(Gamecontroller& gameController, bool isWhite) = 0;
-    // Other common methods or attributes for chess algorithms
-    Move selectRandomMove(const vector<Move>& moves);
-    vector<Move> generateCheckResponseMoves(const vector<unique_ptr<Piece>>& pieces, const Gamecontroller& gc, bool isWhite);
-    pair<int, int> findKing(const Board& bd, bool isWhite);
-    vector<pair<int, int>> getThreateningPieces(const Board& bd, bool isWhite);
-    bool isThreateningPiece(const Board& bd, int x, int y, std::pair<int, int> kingPos, bool isWhite);
-    bool canReachKing(const Board& bd, int x, int y, std::pair<int, int> kingPos, bool checkDiagonal, bool checkStraight);
-    bool canReachKingStraight(const Board& bd, int x, int y, std::pair<int, int> kingPos);
-    bool canReachKingDiagonal(const Board& bd, int x, int y, std::pair<int, int> kingPos);
-    vector<Move> canPieceBeCaptured(const vector<unique_ptr<Piece>>& pieces, Piece* threateningPiece, const Gamecontroller& gameController, bool isWhite);
-    vector<Move> captureMove(const unique_ptr<Piece>& capturingPiece, const Piece* targetPiece, const Gamecontroller& gameController);
+  Algorithm();
+  virtual ~Algorithm() = default;
+
+  // Pick a legal move for the side to move in gc's current position.
+  virtual Move calculateBestMove(const Gamecontroller &gameController) = 0;
+  const std::string &lastInfo() const { return info; }
+
+  // ---------- shared helpers ----------
+  Move selectRandomMove(const std::vector<Move> &moves);
+  static int pieceValue(char pieceType); // centipawns, king = 0
+  static bool givesCheck(Board &bd, const Move &m);
+  static bool isCheckmateMove(Board &bd, const Move &m);
+  // Static evaluation from the point of view of the side to move.
+  static int evaluate(const Board &bd);
+  // Formats a score given from White's point of view ("+0.35", "White mates in 3").
+  static std::string formatScore(int centipawns);
 };
 
-#endif // ALGORITHM_H
+#endif // _ALGORITHM_H

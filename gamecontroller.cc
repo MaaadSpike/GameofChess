@@ -1,1528 +1,393 @@
 #include "gamecontroller.h"
-#include <vector>
+#include "computer.h"
+#include "level4.h"
+#include <cctype>
 #include <iostream>
 #include <sstream>
-#include "move.h"
-#include "computer.h"
 
-Gamecontroller::Gamecontroller(bool cheat) : 
-    curPlayerIndex{0}, curstep{0},
-    cancheat{cheat},
-    gd{std::make_unique<Graphdisplay>()},
-    td{std::make_unique<Textdisplay>()},
-    bd{std::make_unique<Board>()},
-    sb{std::make_unique<Scoreboard>()} {}
+Gamecontroller::Gamecontroller(bool cheat, bool graphics, int thinkMs)
+    : cancheat{cheat}, thinkMs{thinkMs}, gd{std::make_unique<Graphdisplay>(graphics)},
+      td{std::make_unique<Textdisplay>()}, bd{std::make_unique<Board>()},
+      sb{std::make_unique<Scoreboard>()} {}
 
-void Gamecontroller::initializeGame(std::vector<std::unique_ptr<Player>>&& players) {
-    this->players = std::move(players);
-    bd = std::make_unique<Board>();
-    curstep = 0;
-    turn = "White";
-    gamestate = "continue";
-    MoveHistory = std::stack<std::unique_ptr<Move>>();
-    RedoS = std::stack<std::unique_ptr<Move>>();
-    updategd();
-    updatetd();
-}
+Gamecontroller::~Gamecontroller() = default;
 
-int Gamecontroller::whomakethisstep() {
-    return players[curPlayerIndex]->getId();
+// ======================= views =======================
 
-}
-
-void Gamecontroller::computermakemove() {
-    //std::cout << curPlayerIndex << std::endl;
-    int level = players[curPlayerIndex]->getId();
-    std::string s;
-    if (level == 1) s = "level1";
-    else if (level == 2) s = "level2";
-    else if (level == 3) s = "level3";
-    else s = "level4";
-    bool isWhite = false;
-    if (turn == "White") {
-        isWhite = true;
-    }
-    Computer c{1, isWhite, s};
-    //c.setDifficulty(s);
-    c.decideMove(*this);
-}
-
-std::string Gamecontroller::curTurn() {
-    return turn;
-}
-
-void Gamecontroller::changeTurn() {
-    if (turn == "White") {
-        curPlayerIndex = 1;
-        turn = "Black";
-    } else {
-        curPlayerIndex = 0;
-        turn = "White";
-    }
-}
-
-std::string Gamecontroller::checkState() {
-    return gamestate;
-}
-
-void Gamecontroller::updatetd(){
-    td->printtd(bd);
-}
+void Gamecontroller::updatetd() { td->printtd(*bd); }
 
 void Gamecontroller::updategd() {
-    gd->update(bd);
+  const Move *last = MoveHistory.empty() ? nullptr : MoveHistory.top().get();
+  gd->update(*bd, last, statusLine());
 }
 
-void Gamecontroller::updatesb() {
-    sb->addscores(this->checkState());
+void Gamecontroller::updatesb() { sb->addscores(gamestate); }
+
+void Gamecontroller::refresh() {
+  updatetd();
+  updategd();
 }
 
-std::pair<int,int> Gamecontroller::findKing() {
-    if (turn == "White") {
-        for (int i = 0;i < 8; i++) {
-            for (int j = 0; j < 8; j++) {
-                if (bd->getPiece(i,j)->key() == 'K') {
-                    //std::cout << "my king is at " << i << " " << j << std::endl;
-                    return std::pair<int,int>{i,j};
-                }
-            }
-        }
-    } 
-    for (int i = 0;i < 8; i++) {
-        for (int j = 0; j < 8; j++) {
-            if (bd->getPiece(i,j)->key() == 'k') {
-                //std::cout << "my king is at " << i << " " << j << std::endl;
-                return std::pair<int,int>{i,j};
-            }
-        }
-    }
-    return std::pair<int,int>{0,0}; // never reach(avoid warning)
-
+std::string Gamecontroller::statusLine() const {
+  if (inSetup) return "Setup mode  -  " + curTurn() + " to move";
+  if (gamestate == "none") return "Type: game <white> <black>    (" + sb->summary() + ")";
+  if (gamestate != "continue") return endMessage + "    (" + sb->summary() + ")";
+  std::string s = curTurn() + " to move";
+  if (bd->inCheck()) s += "  -  Check!";
+  return s;
 }
 
-// bool Gamecontroller::VHcheck(const char& type, const int& x, const int& y) {
-//     // right side
-//     int sum = 0;
-//     for (int i = y; i >= 0; i--) {
-//         if (bd->getPiece(x,i)->key() == type) {
-//             sum += 1;
-//             break; // break when find a type
-//         } else if (bd->getPiece(i,y)->key() == 'e') {
-//             sum += 0;
-//         } else {
-//             sum += 2;
-//         }
-//     }
-//     if (sum == 1) { // only when there is 0* empty piece between a rook and king
-//         return true;
-//     }
-//     // left side
-//     sum = 0;
-//     for (int i = y; i <= 7; i++) {
-//         if (bd->getPiece(x,i)->key() == type) {
-//             sum += 1;
-//             break; // break when find a type
-//         } else if (bd->getPiece(i, y)->key() == 'e') {
-//             sum += 0;
-//         } else {
-//             sum += 2;
-//         }
-//     }
-//     if (sum == 1) { // only when there is 0* empty piece between a rook and king
-//         return true;
-//     }
-//     // up side
-//     sum = 0;
-//     for (int i = x; i >= 0; i--) {
-//         if (bd->getPiece(i, y)->key() == type) {
-//             sum += 1;
-//             break; // break when find a type
-//         } else if (bd->getPiece(i, y)->key() == 'e') {
-//             sum += 0;
-//         } else {
-//             sum += 2;
-//         }
-//     }
-//     if (sum == 1) { // only when there is 0* empty piece between a rook and king
-//         return true;
-//     }
-//     // down side
-//     sum = 0;
-//     for (int i = x; i <= 7; i++) {
-//         if (bd->getPiece(x, i)->key() == type) {
-//             sum += 1;
-//             break; // break when find a Rook
-//         } else if (bd->getPiece(x, i)->key() == 'e') {
-//             sum += 0;
-//         } else {
-//             sum += 2;
-//         }
-//     }
-//     if (sum == 1) { // only when there is 0* empty piece between a rook and king
-//         return true;
-//     }
+void Gamecontroller::callprintsb() const { sb->printscoreboard(); }
 
-//     return false;
-// }
+// ======================= game flow =======================
 
-// bool Gamecontroller::Dcheck(const char& type, const int& x, const int& y) {
-//     // left upside
-//     int sum = 0;
-//     int u = x;
-//     int v = y;
-//     int c = 1;
-//     while (1) {
-//         u -= c;
-//         v -= c;
-//         if (u < 0 || v < 0) {
-//             break;
-//         }
-//         if (bd->getPiece(u, v)->key() == type) {
-//             sum += 1;
-//             break;
-//         } else if (bd->getPiece(u, v)->key() == 'e') {
-//             sum += 0;
-//             c++;
-//         } else {
-//             sum += 2;
-//             c++;
-//         } 
-//     }
-//     if (sum == 1) { // only when there is 0* empty piece between a rook and king
-//         return true;
-//     }
-
-//     // right upside
-//     sum = 0;
-//     u = x;
-//     v = y;
-//     c = 1;
-//     while (1) {
-//         u -= c;
-//         v += c;
-//         if (u < 0 || v > 7) {
-//             break;
-//         }
-//         if (bd->getPiece(u, v)->key() == type) {
-//             sum += 1;
-//             break;
-//         } else if (bd->getPiece(u, v)->key() == 'e') {
-//             sum += 0;
-//             c++;
-//         } else {
-//             sum += 2;
-//             c++;
-//         } 
-//     }
-//     if (sum == 1) { // only when there is 0* empty piece between a rook and king
-//         return true;
-//     }
-
-//     // left downside
-//     sum = 0;
-//     u = x;
-//     v = y;
-//     c = 1;
-//     while (1) {
-//         u += c;
-//         v -= c;
-//         if (u > 7 || v < 0) {
-//             break;
-//         }
-//         if (bd->getPiece(u, v)->key() == type) {
-//             sum += 1;
-//             break;
-//         } else if (bd->getPiece(u, v)->key() == 'e') {
-//             sum += 0;
-//             c++;
-//         } else {
-//             sum += 2;
-//             c++;
-//         } 
-//     }
-//     if (sum == 1) { // only when there is 0* empty piece between a rook and king
-//         return true;
-//     }
-//     // right downside
-//     sum = 0;
-//     u = x;
-//     v = y;
-//     c = 1;
-//     while (1) {
-//         u += c;
-//         v += c;
-//         if (u > 7 || v > 7) {
-//             break;
-//         }
-//         if (bd->getPiece(u, v)->key() == type) {
-//             sum += 1;
-//             break;
-//         } else if (bd->getPiece(u, v)->key() == 'e') {
-//             sum += 0;
-//             c++;
-//         } else {
-//             sum += 2;
-//             c++;
-//         } 
-//     }
-//     if (sum == 1) { // only when there is 0* empty piece between a rook and king
-//         return true;
-//     }
-//     return false;
-// }
-
-// bool Gamecontroller::ischeck() {
-//     std::pair<int,int> pk = findKing();
-//     int x = pk.first;
-//     int y = pk.second;
-    
-//     if (turn == "White") {
-//         //std::cout << "reach line 248" << std::endl;
-//         // case: King check King 
-//         for (int i = x - 1; i < x + 2; i++) { // 3x3 matrix
-//             for (int j = y - 1; j < y + 2; j++) {
-//                 if (0 <= i && i <= 7 && 0 <= j && j <= 7) {
-//                     if (bd->getPiece(i,j)->key() == 'k'){
-//                         return true;
-//                     }
-//                 }
-//             }
-//         }
-//         std::cout << "reach line 259" << std::endl;
-//         // case: Pawn check King
-//         std::vector<std::pair<int,int>> vp;
-//         vp.emplace_back(std::pair<int,int>{x-1, y-1});
-//         vp.emplace_back(std::pair<int,int>{x-1, y+1});
-//         for (auto it:vp) {
-//             if (0 <= it.first && it.first <= 7 && 
-//             0 <= it.second && it.second <= 7) {
-//                 if (bd->getPiece(it.first,it.second)->key() == 'p'){
-//                     return true;
-//                 }
-//             }
-//         }
-//         std::cout << "reach line 272" << std::endl;
-//         // case: Knight check King
-//         vp.clear();
-//         vp.emplace_back(std::pair<int,int>{x+2, y-1});
-//         vp.emplace_back(std::pair<int,int>{x+2, y+1});
-//         vp.emplace_back(std::pair<int,int>{x-2, y-1});
-//         vp.emplace_back(std::pair<int,int>{x-2, y+1});
-//         vp.emplace_back(std::pair<int,int>{x+1, y-2});
-//         vp.emplace_back(std::pair<int,int>{x+1, y+2});
-//         vp.emplace_back(std::pair<int,int>{x-1, y-2});
-//         vp.emplace_back(std::pair<int,int>{x-1, y+2});
-//         for (auto it:vp) {
-//             if (0 <= it.first && it.first <= 7 && 
-//             0 <= it.second && it.second <= 7) {
-//                 if (bd->getPiece(it.first,it.second)->key() == 'n'){
-//                     return true;
-//                 }
-//             }
-//         }
-//         std::cout << "reach line 321" << std::endl;
-//         // case: Rook check King
-//         if (VHcheck('r', x, y)) {
-//             return true;
-//         }
-//         std::cout << "reach line 326" << std::endl;
-//         // case: Bishop check King
-//         if (Dcheck('b', x, y)) {
-//             return true;
-//         }
-//         std::cout << "reach line 331" << std::endl;
-//         // case: Queen check King
-//         if (VHcheck('q', x, y) || Dcheck('q', x, y)) {
-//             return true;
-//         }
-//         std::cout << "reach line 228" << std::endl;
-//         return false;
-//     } else {
-//         // case: King check King 
-//         for (int i = x - 1; i < x + 2; i++) { // 3x3 matrix
-//             for (int j = y - 1; j < y + 2; j++) {
-//                 if (0 <= i && i <= 7 && 0 <= j && j <= 7) {
-//                     if (bd->getPiece(i,j)->key() == 'K'){
-//                         return true;
-//                     }
-//                 }
-//             }
-//         }
-
-//         // case: Pawn check King
-//         std::vector<std::pair<int,int>> vp;
-//         vp.emplace_back(std::pair<int,int>{x+1, y+1});
-//         vp.emplace_back(std::pair<int,int>{x+1, y-1});
-//         for (auto it:vp) {
-//             if (0 <= it.first && it.first <= 7 && 
-//             0 <= it.second && it.second <= 7) {
-//                 if (bd->getPiece(it.first,it.second)->key() == 'P'){
-//                     return true;
-//                 }
-//             }
-//         }
-
-//         // case: Knight check King
-//         vp.clear();
-//         vp.emplace_back(std::pair<int,int>{x+2, y-1});
-//         vp.emplace_back(std::pair<int,int>{x+2, y+1});
-//         vp.emplace_back(std::pair<int,int>{x-2, y-1});
-//         vp.emplace_back(std::pair<int,int>{x-2, y+1});
-//         vp.emplace_back(std::pair<int,int>{x+1, y-2});
-//         vp.emplace_back(std::pair<int,int>{x+1, y+2});
-//         vp.emplace_back(std::pair<int,int>{x-1, y-2});
-//         vp.emplace_back(std::pair<int,int>{x-1, y+2});
-//         for (auto it:vp) {
-//             if (0 <= it.first && it.first <= 7 && 
-//             0 <= it.second && it.second <= 7) {
-//                 if (bd->getPiece(it.first,it.second)->key() == 'N'){
-//                     return true;
-//                 }
-//             }
-//         }
-
-//         // case: Rook check King
-//         if (VHcheck('R', x, y)) {
-//             return true;
-//         }
-
-//         // case: Bishop check King
-//         if (Dcheck('B', x, y)) {
-//             return true;
-//         }
-
-//         // case: Queen check King
-//         if (VHcheck('Q', x, y) || Dcheck('Q', x, y)) {
-//             return true;
-//         }
-//         return false;
-//     }
-// }
-
-void Gamecontroller::VHthreats(const char& type, const int& x, const int& y, std::vector<std::unique_ptr<Piece>>& Threats) {
-    // left side
-    int sum = 0;
-    for (int i = y; i >= 0; i--) {
-        if (bd->getPiece(x,i)->key() == type) {
-            Threats.emplace_back(bd->getPiece(i,y));
-            sum += 1;
-            if (sum != 1) { // if in this capture trail, there are other piece
-                Threats.pop_back();
-            }
-            break; // break when find a type
-        } else if (bd->getPiece(i,y)->key() == 'e') {
-            sum += 0;
-        } else {
-            sum += 2;
-        }
-    }
-    
-    // right side
-    sum = 0;
-    for (int i = y; i <= 7; i++) {
-        if (bd->getPiece(x, i)->key() == type) {
-            Threats.emplace_back(bd->getPiece(i,y));
-            sum += 1;
-            if (sum != 1) { // if in this capture trail, there are other piece
-                Threats.pop_back();
-            }
-            break; // break when find a type
-        } else if (bd->getPiece(i, y)->key() == 'e') {
-            sum += 0;
-        } else {
-            sum += 2;
-        }
-    }
-       
-    // up side
-    sum = 0;
-    for (int i = x; i >= 0; i--) {
-        if (bd->getPiece(i, y)->key() == type) {
-            Threats.emplace_back(bd->getPiece(x,i));
-            sum += 1;
-            if (sum != 1) { // if in this capture trail, there are other piece
-                Threats.pop_back();
-            }
-            break; // break when find a type
-        } else if (bd->getPiece(x, i)->key() == 'e') {
-            sum += 0;
-        } else {
-            sum += 2;
-        }
-    }
-       
-    // down side
-    sum = 0;
-    for (int i = x; i <= 7; i++) {
-        if (bd->getPiece(i, y)->key() == type) {
-            Threats.emplace_back(bd->getPiece(x,i));
-            sum += 1;
-            if (sum != 1) { // if in this capture trail, there are other piece
-                Threats.pop_back();
-            }
-            break; // break when find a Rook
-        } else if (bd->getPiece(x, i)->key() == 'e') {
-            sum += 0;
-        } else {
-            sum += 2;
-        }
-    }
+void Gamecontroller::initializeGame(std::vector<std::unique_ptr<Player>> &&ps) {
+  players = std::move(ps);
+  if (customStart) {
+    bd = std::make_unique<Board>(*customStart);
+    customStart.reset();
+    standardStart = false;
+  } else {
+    bd = std::make_unique<Board>();
+    standardStart = true;
+  }
+  MoveHistory = {};
+  RedoS = {};
+  played.clear();
+  gamestate = "continue";
+  endMessage.clear();
+  std::cout << "New game: White = " << players[0]->describe()
+            << ", Black = " << players[1]->describe() << std::endl;
+  afterPositionChange();
 }
 
-void Gamecontroller::Dthreats(const char& type, const int& x, const int& y, std::vector<std::unique_ptr<Piece>>& Threats) {
-    //// left upside
-    int sum = 0;
-    int u = x;
-    int v = y;
-    int c = 1;
-    while (1) {
-       u -= c;
-       v -= c;
-       if (u < 0 || v < 0) {
-           break;
-       }
-       //std::cout << "type is " << bd->getPiece(u, v)->key() << u << v << std::endl;
-       if (bd->getPiece(u, v)->key() == type) {
-           Threats.emplace_back(bd->getPiece(u, v));
-           sum += 1;
-           if (sum != 1) { // if in this capture trail, there are other piece
-               Threats.pop_back();
-           }
-           break;
-       } else if (bd->getPiece(u, v)->key() == 'e') {
-           sum += 0;
-           c++;
-       } else {
-           sum += 2;
-           c++;
-       } 
-    }
-    //std::cout << "I reach line 488" << std::endl;
-    // right downside
-    sum = 0;
-    u = x;
-    v = y;
-    c = 1;
-    //sstd::cout << x << y << " king" << std::endl; 
-    while (1) {
-       u += c;
-       v -= c;
-       if (u > 7) break;
-       if (v < 0) break;
-       //std::cout << "type is " << bd->getPiece(u, v)->key() << u << v << std::endl;
-       if (bd->getPiece(u, v)->key() == type) {
-           Threats.emplace_back(bd->getPiece(u, v));
-           sum += 1;
-           if (sum != 1) { // if in this capture trail, there are other piece
-               Threats.pop_back();
-           }
-           break;
-       } else if (bd->getPiece(u, v)->key() == 'e') {
-           sum += 0;
-           c++;
-           continue;
-       } else {
-           sum += 2;
-           c++;
-           continue;
-       } 
-    }
-    //std::cout << "I reach line 515" << std::endl;
-    // right upside
-    sum = 0;
-    u = x;
-    v = y;
-    c = 1;
-    while (1) {
-       u -= c;
-       v += c;
-       if (u < 0 || v > 7) {
-           break;
-       }
-       //std::cout << "type is " << bd->getPiece(u, v)->key() << u << v << std::endl;
-       if (bd->getPiece(u, v)->key() == type) {
-           Threats.emplace_back(bd->getPiece(u, v));
-           sum += 1;
-           if (sum != 1) { // if in this capture trail, there are other piece
-               Threats.pop_back();
-           }
-           break;
-       } else if (bd->getPiece(u, v)->key() == 'e') {
-           sum += 0;
-           c++;
-       } else {
-           sum += 2;
-           c++;
-       } 
-    }
-    //std::cout << "I reach line 542" << std::endl;
-    // right downside
-    sum = 0;
-    u = x;
-    v = y;
-    c = 1;
-    while (1) {
-       u += c;
-       v += c;
-       if (u > 7 || v > 7) {
-           break;
-       }
-       //std::cout << "type is " << bd->getPiece(u, v)->key() << u << v << std::endl;
-       if (bd->getPiece(u, v)->key() == type) {
-           Threats.emplace_back(bd->getPiece(u, v));
-           sum += 1;
-           //
-           if (sum != 1) { // if in this capture trail, there are other piece
-               Threats.pop_back();
-           }
-           break;
-       } else if (bd->getPiece(u, v)->key() == 'e') {
-           sum += 0;
-           c++;
-       } else {
-           sum += 2;
-           c++;
-       } 
-    }
-    //std::cout << "I reach line 569" << std::endl;
+void Gamecontroller::finishGame(const std::string &result, const std::string &message) {
+  gamestate = result;
+  endMessage = message;
+  updatesb();
 }
 
-// void Gamecontroller::Dthreats(const char& type, const int& startX, const int& startY, std::vector<std::unique_ptr<Piece>>& Threats) {
-//     checkDiagonalThreat(type, startX, startY, -1, -1, Threats); // Check left upside
-//     checkDiagonalThreat(type, startX, startY, 1, -1, Threats);  // Check right downside
-//     checkDiagonalThreat(type, startX, startY, -1, 1, Threats);  // Check left downside
-//     checkDiagonalThreat(type, startX, startY, 1, 1, Threats);   // Check right upside
-// }
-
-// void Gamecontroller::checkDiagonalThreat(const char& type, int startX, int startY, int deltaX, int deltaY, std::vector<std::unique_ptr<Piece>>& Threats) {
-//     int x = startX;
-//     int y = startY;
-
-//     while (x >= 0 && x <= 7 && y >= 0 && y <= 7) {
-//         char pieceKey = bd->getPiece(x, y)->key();
-//         if (pieceKey != 'e' && pieceKey != type) {
-//             break; // Found a different piece blocking the path
-//         }
-//         if (pieceKey == type) {
-//             Threats.emplace_back(bd->getPiece(x, y)); // Found the target piece
-//             break;
-//         }
-//         x += deltaX;
-//         y += deltaY;
-//     }
-// }
-
-std::vector<std::unique_ptr<Piece>> Gamecontroller::findthreats() {
-    std::pair<int,int> pk = findKing();
-    int x = pk.first;
-    int y = pk.second;
-    std::vector<std::unique_ptr<Piece>> Threats;
-
-    if (turn == "White") {
-        // case: King check King 
-        for (int i = x - 1; i < x + 2; i++) { // 3x3 matrix
-            for (int j = y - 1; j < y + 2; j++) {
-                if (0 <= i && i <= 7 && 0 <= j && j <= 7) {
-                    if (bd->getPiece(i,j)->key() == 'k'){
-                        Threats.emplace_back(bd->getPiece(i,j));
-                    }
-                }
-            }
-        }
-
-        // case: Pawn check King
-        std::vector<std::pair<int,int>> vp;
-        vp.emplace_back(std::pair<int,int>{x-1, y+1});
-        vp.emplace_back(std::pair<int,int>{x-1, y-1});
-        for (auto it:vp) {
-            if (0 <= it.first && it.first <= 7 && 
-            0 <= it.second && it.second <= 7) {
-                if (bd->getPiece(it.first,it.second)->key() == 'p'){
-                    Threats.emplace_back(bd->getPiece(it.first,it.second));
-                }
-            }
-        }
-
-        // case: Knight check King
-        vp.clear();
-        vp.emplace_back(std::pair<int,int>{x+2, y-1});
-        vp.emplace_back(std::pair<int,int>{x+2, y+1});
-        vp.emplace_back(std::pair<int,int>{x-2, y-1});
-        vp.emplace_back(std::pair<int,int>{x-2, y+1});
-        vp.emplace_back(std::pair<int,int>{x+1, y-2});
-        vp.emplace_back(std::pair<int,int>{x+1, y+2});
-        vp.emplace_back(std::pair<int,int>{x-1, y-2});
-        vp.emplace_back(std::pair<int,int>{x-1, y+2});
-        for (auto it:vp) {
-            if (0 <= it.first && it.first <= 7 && 
-            0 <= it.second && it.second <= 7) {
-                if (bd->getPiece(it.first,it.second)->key() == 'n'){
-                    Threats.emplace_back(bd->getPiece(it.first,it.second));
-                }
-            }
-        }
-        // case: Rook check King
-        VHthreats('r', x, y, Threats);
-
-        // case: Bishop check King
-        Dthreats('b', x, y, Threats);
-
-        // case: Queen check King
-        VHthreats('q', x, y, Threats);
-        Dthreats('q', x, y, Threats);
-        return Threats;
+// Print the board, then report check / the end of the game.
+void Gamecontroller::afterPositionChange() {
+  std::string message;
+  const bool check = bd->inCheck();
+  if (!bd->hasLegalMove()) {
+    if (check) {
+      const std::string winner = bd->whiteToMove() ? "Black" : "White";
+      message = "Checkmate! " + winner + " wins!";
+      finishGame(winner + "win", "Checkmate! " + winner + " wins");
     } else {
-       // std::cout << "black threats" << std::endl;
-        // case: King check King 
-        for (int i = x - 1; i < x + 2; i++) { // 3x3 matrix
-            for (int j = y - 1; j < y + 2; j++) {
-                if (0 <= i && i <= 7 && 0 <= j && j <= 7) {
-                    if (bd->getPiece(x,y)->key() == 'K'){
-                        Threats.emplace_back(bd->getPiece(i,j));
-                    }
-                }
-            }
-        }
-        //std::cout << "I reach line 638" << std::endl;
-        // case: Pawn check King
-        std::vector<std::pair<int,int>> vp;
-        vp.emplace_back(std::pair<int,int>{x+1, y+1});
-        vp.emplace_back(std::pair<int,int>{x+1, y-1});
-        for (auto it:vp) {
-            if (0 <= it.first && it.first <= 7 && 
-            0 <= it.second && it.second <= 7) {
-                if (bd->getPiece(it.first,it.second)->key() == 'P'){
-                    Threats.emplace_back(bd->getPiece(it.first,it.second));
-                }
-            }
-        }
-        //std::cout << "I reach line 651" << std::endl;
-        // case: Knight check King
-        vp.clear();
-        vp.emplace_back(std::pair<int,int>{x+2, y-1});
-        vp.emplace_back(std::pair<int,int>{x+2, y+1});
-        vp.emplace_back(std::pair<int,int>{x-2, y-1});
-        vp.emplace_back(std::pair<int,int>{x-2, y+1});
-        vp.emplace_back(std::pair<int,int>{x+1, y-2});
-        vp.emplace_back(std::pair<int,int>{x+1, y+2});
-        vp.emplace_back(std::pair<int,int>{x-1, y-2});
-        vp.emplace_back(std::pair<int,int>{x-1, y+2});
-        for (auto it:vp) {
-            if (0 <= it.first && it.first <= 7 && 
-            0 <= it.second && it.second <= 7) {
-                if (bd->getPiece(it.first,it.second)->key() == 'N'){
-                    Threats.emplace_back(bd->getPiece(it.first,it.second));
-                }
-            }
-        }
-
-       // case: Rook check King
-        VHthreats('R', x, y, Threats);
-
-        // case: Bishop check King
-        Dthreats('B', x, y, Threats);
-        
-        // case: Queen check King
-        VHthreats('Q', x, y, Threats);
-        Dthreats('Q', x, y, Threats);
-        return Threats;
+      message = "Stalemate!";
+      finishGame("draw", "Stalemate - draw");
     }
+  } else if (bd->halfmoveClock() >= 100) {
+    message = "Draw by the fifty-move rule.";
+    finishGame("draw", "Draw (fifty-move rule)");
+  } else if (bd->repetitionCount() >= 3) {
+    message = "Draw by threefold repetition.";
+    finishGame("draw", "Draw (threefold repetition)");
+  } else if (bd->insufficientMaterial()) {
+    message = "Draw by insufficient material.";
+    finishGame("draw", "Draw (insufficient material)");
+  } else if (check) {
+    message = curTurn() + " is in check.";
+  }
+  refresh();
+  if (!message.empty()) std::cout << message << std::endl;
+  if (gamestate != "continue")
+    std::cout << "Start a new game with: game <white-player> <black-player>" << std::endl;
 }
 
-bool Gamecontroller::ischeck() {
-    //std::cout << turn << std::endl;
-    if (findthreats().size() > 0) {
-        return true;
-    } return false;
+void Gamecontroller::applyMove(const Move &m, bool clearRedo) {
+  bd->makeMove(m);
+  MoveHistory.push(std::make_unique<Move>(m));
+  if (clearRedo) RedoS = {};
+  played.push_back(m.toString());
 }
 
-std::vector<std::unique_ptr<Piece>> Gamecontroller::alivePieces() {
-    std::vector<std::unique_ptr<Piece>> alives;
-    if (turn == "White") {
-        for (int i = 0; i < 8; i++) {
-            for (int j = 0; j < 8; j++) {
-                char c = bd->getPiece(i, j)->key();
-                if ('A' <= c && c <= 'Z' && c != 'K') {
-                    alives.emplace_back(bd->getPiece(i, j));
-                }
-            }
-        }
-        //std::cout << "I reach line 696" << std::endl;
-        return alives;
-    } else {
-        for (int i = 0; i < 8; i++) {
-            for (int j = 0; j < 8; j++) {
-                char c = bd->getPiece(i, j)->key();
-                if ('a' <= c && c <= 'z' && c != 'e' && c != 'k') {
-                    alives.emplace_back(bd->getPiece(i, j));
-                }
-            }
-        }
-        //std::cout << "I reach line 707 I have "<< alives.size() << " lives"<< std::endl;
-        return alives;
-    }
+bool Gamecontroller::ischeck() const { return bd->inCheck(); }
+
+bool Gamecontroller::ischeckmate() { return bd->inCheck() && !bd->hasLegalMove(); }
+
+bool Gamecontroller::isdraw() {
+  return (!bd->inCheck() && !bd->hasLegalMove()) || bd->halfmoveClock() >= 100 ||
+         bd->repetitionCount() >= 3 || bd->insufficientMaterial();
 }
 
-void Gamecontroller::VHmoves(const int& x, const int& y, const std::unique_ptr<Piece>& p, std::vector<Move> & vm) const {
-    // up side
-    for (int i = x - 1; i >= 0; i--) {
-        Move m;
-        m.setOpo(std::pair<int,int>{x,y});
-        m.setNpo(std::pair<int,int>{i,y});
-        if (p->isMove(m.getOpo(), m.getNpo(), *bd)) {
-            vm.emplace_back(m);
-        }
-    }
-    
-    // down side
-    for (int i = x + 1; i <= 7; i++) {
-        Move m;
-        m.setOpo(std::pair<int,int>{x,y});
-        m.setNpo(std::pair<int,int>{i,y});
-        if (p->isMove(m.getOpo(), m.getNpo(), *bd)) {
-            vm.emplace_back(m);
-        }
-    }
-    
-    // left side
-    for (int i = y - 1; i >= 0; i--) {
-        Move m;
-        m.setOpo(std::pair<int,int>{x,y});
-        m.setNpo(std::pair<int,int>{x,i});
-        if (p->isMove(m.getOpo(), m.getNpo(), *bd)) {
-            vm.emplace_back(m);
-        }
-    }
-    
-    // right side
-    for (int i = y + 1; i <= 7; i++) {
-        Move m;
-        m.setOpo(std::pair<int,int>{x,y});
-        m.setNpo(std::pair<int,int>{x,i});
-        if (p->isMove(m.getOpo(), m.getNpo(), *bd)) {
-            vm.emplace_back(m);
-        }
-    }
+std::vector<Move> Gamecontroller::legalMoves() const {
+  Board copy{*bd};
+  return copy.legalMoves();
 }
 
-void Gamecontroller::Dmoves(const int& x, const int& y, const std::unique_ptr<Piece>& p, std::vector<Move> & vm) const {
-    // left upside
-    int u = x;
-    int v = y;
-    int c = 1;
-    while (1) {
-        u -= c;
-        v -= c;
-        if (u < 0 || v < 0) {
-            break;
-        }
-        Move m;
-        m.setOpo(std::pair<int,int>{x,y});
-        m.setNpo(std::pair<int,int>{u,v});
-        if (p->isMove(m.getOpo(), m.getNpo(), *bd)) {
-            vm.emplace_back(m);
-        }
-        c++;
-    }
-    
-    // left downside
-    u = x;
-    v = y;
-    c = 1;
-    while (1) {
-        u += c;
-        v -= c;
-        if (u > 7 || v < 0) {
-            break;
-        }
-        Move m;
-        m.setOpo(std::pair<int,int>{x,y});
-        m.setNpo(std::pair<int,int>{u,v});
-        if (p->isMove(m.getOpo(), m.getNpo(), *bd)) {
-            vm.emplace_back(m);
-        }
-        c++;
-    }
-    
-    //  right upside
-    u = x;
-    v = y;
-    c = 1;
-    while (1) {
-        u -= c;
-        v += c;
-        if (u < 0 || v > 7) {
-            break;
-        }
-        Move m;
-        m.setOpo(std::pair<int,int>{x,y});
-        m.setNpo(std::pair<int,int>{u,v});
-        if (p->isMove(m.getOpo(), m.getNpo(), *bd)) {
-            vm.emplace_back(m);
-        }
-        c++;
-    }
-    
-    // right downside
-    u = x;
-    v = y;
-    c = 1;
-    while (1) {
-        u += c;
-        v += c;
-        if (u > 7 || v > 7) {
-            break;
-        }
-        Move m;
-        m.setOpo(std::pair<int,int>{x,y});
-        m.setNpo(std::pair<int,int>{u,v});
-        if (p->isMove(m.getOpo(), m.getNpo(), *bd)) {
-            vm.emplace_back(m);
-        }
-        c++;
-    }
-
+int Gamecontroller::whomakethisstep() const {
+  if (players.size() < 2) return 0;
+  return players[curPlayerIndex()]->getId();
 }
 
-std::vector<Move> Gamecontroller::possiblemoves(const std::unique_ptr<Piece>& p) const { 
-    int x = p->getCoord().first;
-    int y = p->getCoord().second;
-    std::vector<Move> vm;
-    // King
-    
-    if (p->key() == 'K' || p->key() == 'k') {
-        for (int i = x - 1; i < x + 2; i++) { // 3x3 matrix
-           for (int j = y - 1; j < y + 2; j++) {
-               if (0 <= i && i <= 7 && 0 <= j && j <= 7 &&
-               p->isMove(p->getCoord(), std::pair<int,int>{i,j}, *bd)) {
-                    Move m;
-                    m.setOpo(std::pair<int,int>{x,y});
-                    m.setNpo(std::pair<int,int>{i,j});                
-                    vm.emplace_back(m);
-               }
-           }
-        }
-        //std::cout << "I reach 849" << std::endl;
-        Move m1;
-        m1.setOpo(std::pair<int,int>{x,y});
-        m1.setNpo(std::pair<int,int>{x,y+2});
-        if (p->isMove(std::pair<int,int>{x, y}, std::pair<int,int>{x, y+2}, *bd)) { // check the castling is valid or not
-            vm.emplace_back(m1);
-        }
-        //std::cout << "I reach 856" << std::endl;
-        Move m2;
-        m2.setOpo(std::pair<int,int>{x,y});
-        m2.setNpo(std::pair<int,int>{x,y-2});
-        if (p->isMove(std::pair<int,int>{x, y}, std::pair<int,int>{x, y-2}, *bd)) { // check the castling is valid or not
-            vm.emplace_back(m2);
-        }      
-        return vm;
-    }
-    // Pawn
-    //std::cout << "I reach 867" << std::endl;
-    if (p->key() == 'P') { // white player
-        int u1 = x-1;
-        int v1 = y+1;
-        int u2 = x-1;
-        int v2 = y-1;
-        int u3 = x-1;
-        int v3 = y;
-        if (u1 >= 0 && v1 <= 7) {
-            Move m;
-            m.setOpo(std::pair<int,int>{x, y});
-            m.setNpo(std::pair<int,int>{u1, v1});
-            if (p->isMove(std::pair<int,int>{x, y}, std::pair<int,int>{u1, v1}, *bd)) { // check the move is valid or not
-                vm.emplace_back(m);
-            }    
-        }
-        //std::cout << "I reach 884" << std::endl;
-        if (u2 >= 0 && v2 >= 0) {
-            Move m;
-            m.setOpo(std::pair<int,int>{x, y});
-            m.setNpo(std::pair<int,int>{u2, v2});
-            if (p->isMove(std::pair<int,int>{x, y}, std::pair<int,int>{u2, v2}, *bd)) { // check the move is valid or not
-                vm.emplace_back(m);
-            }    
-        }
-        //std::cout << "I reach 893" << std::endl;
-        if (v3 >= 0) {
-            Move m;
-            m.setOpo(std::pair<int,int>{x, y});
-            m.setNpo(std::pair<int,int>{u3, v3});
-            vm.emplace_back(m);   
-        }
-        //std::cout << "I reach 900" << std::endl;
-        if (!p->hasMoved()) {
-            Move m;
-            m.setOpo(std::pair<int,int>{x, y});
-            m.setNpo(std::pair<int,int>{x-2, y});
-            if (p->isMove(std::pair<int,int>{x, y}, std::pair<int,int>{u2, v2}, *bd)) { // check the move is valid or not
-                vm.emplace_back(m);
-            }  
-        }
-        //std::cout << "I reach 909" << std::endl;
-        
-        Move lastmove;
-        if (!MoveHistory.empty()) lastmove = *(MoveHistory.top());
-        if (p->getCoord().first == 3 &&
-        lastmove.gettype1() == 'p' &&
-        ((lastmove.getOpo() == std::pair<int,int>{1, p->getCoord().second + 1} && lastmove.getNpo() == std::pair<int,int>{3, p->getCoord().second + 1}) ||
-        (lastmove.getOpo() == std::pair<int,int>{1, p->getCoord().second - 1} && lastmove.getNpo() == std::pair<int,int>{3, p->getCoord().second - 1}))){
-            if (p->getCoord().second + 1 <= 7) {
-                Move m;
-                m.setOpo(std::pair<int,int>{x,y});
-                m.setNpo(std::pair<int,int>{x-1,y+1});
-                vm.emplace_back(m);
-            }
-            if (p->getCoord().second - 1 >= 0) {
-                Move m;
-                m.setOpo(std::pair<int,int>{x,y});
-                m.setNpo(std::pair<int,int>{x-1,y-1});
-                vm.emplace_back(m);
-            }
-            
-        }
-    
-        //std::cout << "I reach 929" << std::endl;
-        return vm;
-    }
-    //std::cout << "I reach 926" << std::endl;
-    if (p->key() == 'p') { // black player
-        int u1 = x+1;
-        int v1 = y+1;
-        int u2 = x+1;
-        int v2 = y-1;
-        int u3 = x+1;
-        int v3 = y;
-        if (u1 <= 7 && v1 <= 7) {
-            Move m;
-            m.setOpo(std::pair<int,int>{x, y});
-            m.setNpo(std::pair<int,int>{u1, v1});
-            if (p->isMove(std::pair<int,int>{x, y}, std::pair<int,int>{u1, v1}, *bd)) { // check the move is valid or not
-                vm.emplace_back(m);
-            }    
-        }
-        //std::cout << "I reach 948" << std::endl;
-        if (u2 <= 7 && v2 >= 0) {
-            Move m;
-            m.setOpo(std::pair<int,int>{x, y});
-            m.setNpo(std::pair<int,int>{u2, v2});
-            if (p->isMove(std::pair<int,int>{x, y}, std::pair<int,int>{u2, v2}, *bd)) { // check the move is valid or not
-                vm.emplace_back(m);
-            }    
-        }
-        //std::cout << "I reach 957" << std::endl;
-        if (v3 <= 7) {
-            Move m;
-            m.setOpo(std::pair<int,int>{x, y});
-            m.setNpo(std::pair<int,int>{u3, v3});
-            if (p->isMove(std::pair<int,int>{x, y}, std::pair<int,int>{u3, v3}, *bd)) { // check the move is valid or not
-                vm.emplace_back(m);
-            }   
-        }
-        //std::cout << "I reach 966" << std::endl;
-        //std::cout << "position(" << p->getCoord().first << p->getCoord().second << std::endl;
-        if (!p->hasMoved()) {
-            //std::cout << "I reach 968" << std::endl;
-            Move m;
-            m.setOpo(std::pair<int,int>{x, y});
-            m.setNpo(std::pair<int,int>{x+2, y});
-            if (p->isMove(std::pair<int,int>{x, y}, std::pair<int,int>{u2, v2}, *bd)) { // check the move is valid or not
-                //std::cout << "I reach 986" << std::endl;
-                vm.emplace_back(m);
-            }
-           // std::cout << "I reach 988" << std::endl;
-        }
-        //std::cout << "I reach 975" << std::endl;
-        Move lastmove;
-        if (!MoveHistory.empty()) lastmove = *(MoveHistory.top());
-        if (p->getCoord().first == 4 &&
-        lastmove.gettype1() == 'P' &&
-        ((lastmove.getOpo() == std::pair<int,int>{6, p->getCoord().second + 1} && lastmove.getNpo() == std::pair<int,int>{4, p->getCoord().second + 1}) ||
-        (lastmove.getOpo() == std::pair<int,int>{6, p->getCoord().second - 1} && lastmove.getNpo() == std::pair<int,int>{4, p->getCoord().second - 1}))){
-            if (p->getCoord().second + 1 <= 7) {
-                Move m;
-                m.setOpo(std::pair<int,int>{x,y});
-                m.setNpo(std::pair<int,int>{x+1,y+1});
-                vm.emplace_back(m);
-            }
-            if (p->getCoord().second - 1 >= 0) {
-                Move m;
-                m.setOpo(std::pair<int,int>{x,y});
-                m.setNpo(std::pair<int,int>{x+1,y-1});
-                vm.emplace_back(m);
-            }
-            
-        }
-       // std::cout << "I reach 995" << std::endl;
-        return vm;
-    }
-    //knight
-    //std::cout << "I reach 988" << std::endl;
-    if (p->key() == 'N' || p->key() == 'n') {
-        //std::cout << "I reach 990" << std::endl;
-        Move m1;
-        m1.setOpo(std::pair<int,int>{x,y});
-        m1.setNpo(std::pair<int,int>{x+2, y-1});
-        if (0 <= x+2 && x+2 <= 7 &&
-         0 <= y-1 && y-1 <= 7 &&
-        p->isMove(m1.getOpo(), m1.getNpo(), *bd)) vm.emplace_back(m1);
-        
-        Move m2;
-        m2.setOpo(std::pair<int,int>{x,y});
-        m2.setNpo(std::pair<int,int>{x+2, y+1});
-        if (0 <= x+2 && x+2 <= 7 &&
-         0 <= y+1 && y+1 <= 7 &&
-         p->isMove(m2.getOpo(), m2.getNpo(), *bd)) vm.emplace_back(m2);
-
-        Move m3;
-        m3.setOpo(std::pair<int,int>{x,y});
-        m3.setNpo(std::pair<int,int>{x-2, y-1});
-        if (0 <= x-2 && x-2 <= 7 &&
-         0 <= y-1 && y-1 <= 7 &&
-         p->isMove(m3.getOpo(), m3.getNpo(), *bd)) vm.emplace_back(m3);
-        
-        Move m4;
-        m4.setOpo(std::pair<int,int>{x,y});
-        m4.setNpo(std::pair<int,int>{x-2, y+1});
-        if (0 <= x-2 && x-2 <= 7 &&
-         0 <= y+1 && y+1 <= 7 &&
-         p->isMove(m4.getOpo(), m4.getNpo(), *bd)) vm.emplace_back(m4);
-
-        Move m5;
-        m5.setOpo(std::pair<int,int>{x,y});
-        m5.setNpo(std::pair<int,int>{x+1, y-2});
-        if (0 <= x+1 && x+1 <= 7 &&
-         0 <= y-2 && y-2 <= 7 &&
-         p->isMove(m5.getOpo(), m5.getNpo(), *bd)) vm.emplace_back(m5);
-
-        Move m6;
-        m6.setOpo(std::pair<int,int>{x,y});
-        m6.setNpo(std::pair<int,int>{x+1, y+2});
-        if (0 <= x+1 && x+1 <= 7 &&
-         0 <= y+2 && y+2 <= 7 &&
-         p->isMove(m6.getOpo(), m6.getNpo(), *bd)) vm.emplace_back(m6);
-
-        Move m7;
-        m7.setOpo(std::pair<int,int>{x,y});
-        m7.setNpo(std::pair<int,int>{x-1, y-2});
-        if (0 <= x-1 && x-1 <= 7 &&
-         0 <= y-2 && y-2 <= 7 &&
-         p->isMove(m7.getOpo(), m7.getNpo(), *bd)) vm.emplace_back(m7);
-        
-        Move m8;
-        m8.setOpo(std::pair<int,int>{x,y});
-        m8.setNpo(std::pair<int,int>{x-1, y+2});
-        if (0 <= x-1 && x-1 <= 7 &&
-         0 <= y+2 && y+2 <= 7 &&
-         p->isMove(m8.getOpo(), m8.getNpo(), *bd)) vm.emplace_back(m8);
-        
-        return vm;
-    }
-    //std::cout << "I reach 1032" << std::endl;
-    // Rook
-    if (p->key() == 'R' || p->key() == 'r') {
-        VHmoves(x,y,p,vm);
-        return vm;
-    }
-    
-    //Bishop
-    if (p->key() == 'B' || p->key() == 'b') {
-        Dmoves(x,y,p,vm);
-        return vm;
-    }
-
-    // Queen
-    if (p->key() == 'Q' || p->key() == 'q') {
-        VHmoves(x,y,p,vm);
-        Dmoves(x,y,p,vm);
-        return vm;
-    }
-    return vm;
+bool Gamecontroller::isComputerTurn() const {
+  return players.size() == 2 && !players[curPlayerIndex()]->isHuman();
 }
 
-bool Gamecontroller::dopossiblemoves(const std::unique_ptr<Piece>& p) {
-    //std::cout << "position" << p->getCoord().first << ", " << p->getCoord().second << std::endl;
-    std::vector<Move> vm = possiblemoves(p);
-    //std::cout << "I reach " << std::endl;
-    std::unique_ptr<Board> store = std::make_unique<Board>(*bd);
-    for (auto it:vm) {
-        bd->movePiece(it.getNpo().first, it.getNpo().second, p);
-        if (!ischeck()) { // if the possible move doesn't let the player in check
-            bd = std::make_unique<Board>(*store); // undo the move
-            return true;
-        }
-        bd = std::make_unique<Board>(*store); // undo the move
-    }
-    return false;
-}
-
-bool Gamecontroller::ischeckmate() {
-    if (!ischeck()){
-        return false;
-    } else {
-        if (dopossiblemoves(bd->getPiece(findKing().first, findKing().second))) { // if we can move king
-            return false;
-        } 
-        if (findthreats().size() == 1) { // if there is only one threat
-            //std::cout << "I reach 1076" << std::endl;
-            std::vector<std::unique_ptr<Piece>> va = std::move(alivePieces());
-            for (auto &it:va) { // 
-                //std::cout <<  "type: " << it->key() << " pos: "<< it->getCoord().first << it->getCoord().second << std::endl;
-                if(dopossiblemoves(it)) { // if dopossiblemvoes is true, which means there is a way make the player not check
-                    return false;
-                }
-            }
-            std::cout << "Checkmate! " << turn << " wins!" << std::endl;
-            gamestate = turn + "win";
-            updatesb();
-            return true;
-            
-        } 
-        std::cout << "Checkmate! " << turn << " wins!" << std::endl;
-        gamestate = turn + "win";
-        updatesb();
-        return true; // if there are more than one threats, and we cannot move king, then it is checkmate 
-    }
-}
-
-bool Gamecontroller::dopossiblemoves2(std::pair<int,int> p1, std::pair<int,int> p2) {
-    std::unique_ptr<Board> store = std::make_unique<Board>(*bd); // Store current board state
-
-    bd->movePiece(p2.first, p2.second, bd->getPiece(p1.first, p1.second)); // Execute move
-    if (turn == "White") {
-        turn == "Black";
-    } else {
-        turn == "White";
-    }
-    bool moveLeadsToCheck = ischeck(); // Check if this move results in a check
-
-    bd = std::make_unique<Board>(*store); // Undo the move by restoring the board
-    if (turn == "White") {
-        turn == "Black";
-    } else {
-        turn == "White";
-    }
-    return !moveLeadsToCheck; // Return true if move doesn't lead to check, otherwise false
+bool Gamecontroller::hasHuman() const {
+  return players.size() == 2 && (players[0]->isHuman() || players[1]->isHuman());
 }
 
 bool Gamecontroller::makeMove(Move &m) {
-    //std::cout << "turn: " << turn << std::endl;
-    m.settype1(bd->getPiece(m.getOpo().first, m.getOpo().second)->key()); // set original type(type1)
-    if (m.gettype1() == 'e') {
-        std::cerr << "Cannot move empty piece!" << std::endl;
-        return false;
-    }
-    if (turn == "White" && !('A' <= m.gettype1() && m.gettype1() < 'Z')) {
-        std::cerr << "White cannot move Black" << std::endl;
-        return false;
-    }
-    //std::cout << "type: " << m.gettype1() << std::endl;
-    if ((turn == "Black") && !('a' <= m.gettype1() && m.gettype1() < 'z')) {
-        std::cerr << "Black cannot move White" << std::endl;
-        return false;
-    }
-    char cptype = bd->getPiece(m.getNpo().first, m.getNpo().second)->key(); // potential captured piece type
-    if (!ischeck()) {
-        //std::cout << "reach line 1089" << std::endl;
-        if (curstep >= 1) {
-            // check for enpassant
-            Move lastmove = *(MoveHistory.top());
-            char c = m.gettype1();
-            if (c == 'P' && m.getOpo().first == 3 && m.getNpo().first == 2 &&
-            (m.getNpo().second == m.getOpo().second + 1 || m.getNpo().second == m.getOpo().second - 1) &&
-            0 <= m.getNpo().second && m.getNpo().second <= 7 &&
-            lastmove.gettype1() == 'p' &&
-            lastmove.getOpo() == std::pair<int,int>{m.getNpo().first-1,m.getNpo().second} &&
-            lastmove.getNpo() == std::pair<int,int>{m.getNpo().first+1,m.getNpo().second}) { // white
-                if (!dopossiblemoves2(m.getOpo(), m.getNpo()) || findthreats().size() > 0) { // if this move makes player in check
-                    std::cout << "it is not a wide choice(You will be in check)" << std::endl;
-                    return false;
-                }
-                std::cout << "White" << "use en passant!" << std::endl;
-                bd->movePiece(m.getNpo().first, m.getNpo().second, bd->getPiece(m.getOpo().first, m.getOpo().second));
-                m.setenpassant();
-                m.settype2(m.gettype1()); // type1 = type2
-                m.setCpo(std::pair<int,int>{m.getNpo().first+1, m.getNpo().second});
-                m.settype3('p');
-                bd->removePiece(m.getCpo());
-                MoveHistory.push(std::make_unique<Move>(m)); // push move into history stack
-                updategd();
-                updatetd();
-                changeTurn();
-                curstep++;
-                return true;
-            }
-            if (c == 'p' && m.getOpo().first == 4 && m.getNpo().first == 5 &&
-            (m.getNpo().second == m.getOpo().second + 1 || m.getNpo().second == m.getOpo().second - 1) &&
-            0 <= m.getNpo().second && m.getNpo().second <= 7 &&
-            lastmove.gettype1() == 'P' &&
-            lastmove.getOpo() == std::pair<int,int>{m.getNpo().first+1,m.getNpo().second} &&
-            lastmove.getNpo() == std::pair<int,int>{m.getNpo().first-1,m.getNpo().second}) { // black
-                if (!dopossiblemoves2(m.getOpo(), m.getNpo())) { // if this move makes player in check
-                    std::cout << "it is not a wide choice(You will be in check)" << std::endl;
-                    return false;
-                }
-                std::cout << "Black" << "use en passant!" << std::endl;
-                bd->movePiece(m.getNpo().first, m.getNpo().second, bd->getPiece(m.getOpo().first, m.getOpo().second));
-                m.setenpassant();
-                m.settype2(m.gettype1()); // type1 = type2
-                m.setCpo(std::pair<int,int>{m.getNpo().first-1, m.getNpo().second});
-                m.settype3('P');
-                bd->removePiece(m.getCpo());
-                MoveHistory.push(std::make_unique<Move>(m)); // push move into history stack
-                updategd();
-                updatetd();
-                changeTurn();
-                curstep++;
-                return true;
-            }
-        // end check enpassant
-        }
-        
-        if ((!bd->getPiece(m.getOpo().first, m.getOpo().second)->isMove(m.getOpo(), m.getNpo(), *bd))) { // check validity
-            std::cerr << "Invalid move!" << std::endl;
-            return false;
-        } 
-        if (!dopossiblemoves2(m.getOpo(), m.getNpo())) { // if this move makes player in check
-            std::cout << "it is not a wide choice(You will be in check)" << std::endl;
-            return false;
-        }
-        std::string s = bd->movePiece(m.getNpo().first, m.getNpo().second, bd->getPiece(m.getOpo().first, m.getOpo().second));
-        if (s == "normal") { // if it is a normal move
-            m.settype2(m.gettype1()); // set the original type as a new piece
-            m.setCpo(m.getNpo()); // the the capture postion be the New postion
-            m.settype3(cptype); // set the capture type
-        } else if (s == "castling") {
-            std::cout << turn << "use castling!" << std::endl;
-            m.setcastling();
-            m.settype2(m.gettype1()); // type1 = type2
-            m.setCpo(m.getNpo()); // the the capture postion be the New postion
-            m.settype3(cptype); // set the capture type
-        } else if (s == "promotion") { // promotion
-            std::cout << turn << "use promotion!" << std::endl;
-            m.setpromotion();
-            m.setCpo(m.getNpo()); // the the capture postion be the New postion
-            m.settype3(cptype); // set the capture type
-            bd->placePiece(m.gettype2(),m.getNpo()); // place new piece in the position
-        }
-        MoveHistory.push(std::make_unique<Move>(m)); // push move into history stack
-        updategd();
-        updatetd();
-        changeTurn();
-        curstep++;
-        return true;
-    } else {
-        std::cout << "You are in check" << std::endl;
-        // check for enpassant
-        Move lastmove = *(MoveHistory.top());
-        char c = m.gettype1();
-        if (c == 'P' && m.getOpo().first == 3 && m.getNpo().first == 2 &&
-        (m.getNpo().second == m.getOpo().second + 1 || m.getNpo().second == m.getOpo().second - 1) &&
-        0 <= m.getNpo().second && m.getNpo().second <= 7 &&
-        lastmove.gettype1() == 'p' &&
-        lastmove.getOpo() == std::pair<int,int>{m.getNpo().first-1,m.getNpo().second} &&
-        lastmove.getNpo() == std::pair<int,int>{m.getNpo().first+1,m.getNpo().second}) { // white
-            if (!dopossiblemoves2(m.getOpo(), m.getNpo())) { // if this move makes player in check
-                std::cout << "it is not a wide choice(You will be in check)" << std::endl;
-                return false;
-            }
-            std::cout << "White" << "use en passant!" << std::endl;
-            bd->movePiece(m.getNpo().first, m.getNpo().second, bd->getPiece(m.getOpo().first, m.getOpo().second));
-            m.setenpassant();
-            m.settype2(m.gettype1()); // type1 = type2
-            m.setCpo(std::pair<int,int>{m.getNpo().first+1, m.getNpo().second});
-            m.settype3('p');
-            bd->removePiece(m.getCpo());
-            MoveHistory.push(std::make_unique<Move>(m)); // push move into history stack
-            updategd();
-            updatetd();
-            changeTurn();
-            curstep++;
-            return true;
-        }
-        if (c == 'p' && m.getOpo().first == 4 && m.getNpo().first == 5 &&
-        (m.getNpo().second == m.getOpo().second + 1 || m.getNpo().second == m.getOpo().second - 1) &&
-        0 <= m.getNpo().second && m.getNpo().second <= 7 &&
-        lastmove.gettype1() == 'P' &&
-        lastmove.getOpo() == std::pair<int,int>{m.getNpo().first+1,m.getNpo().second} &&
-        lastmove.getNpo() == std::pair<int,int>{m.getNpo().first-1,m.getNpo().second}) { // black
-            if (!dopossiblemoves2(m.getOpo(), m.getNpo())) { // if this move makes player in check
-                std::cout << "it is not a wide choice(You will be in check)" << std::endl;
-                return false;
-            }
-            std::cout << "Black" << "use en passant!" << std::endl;
-            bd->movePiece(m.getNpo().first, m.getNpo().second, bd->getPiece(m.getOpo().first, m.getOpo().second));
-            m.setenpassant();
-            m.settype2(m.gettype1()); // type1 = type2
-            m.setCpo(std::pair<int,int>{m.getNpo().first-1, m.getNpo().second});
-            m.settype3('P');
-            bd->removePiece(m.getCpo());
-            MoveHistory.push(std::make_unique<Move>(m)); // push move into history stack
-            updategd();
-            updatetd();
-            changeTurn();
-            curstep++;
-            return true;
-        }
-        // end check enpassant
-        if ((!bd->getPiece(m.getOpo().first, m.getOpo().second)->isMove(m.getOpo(), m.getNpo(), *bd))) { // check validity
-            std::cerr << "Invalid move!" << std::endl;
-            return false;
-        } 
-        if (dopossiblemoves2(m.getOpo(), m.getNpo())) { // same as previous
-            std::string s = bd->movePiece(m.getNpo().first, m.getNpo().second, bd->getPiece(m.getOpo().first, m.getOpo().second));
-            if (s == "normal") { // if it is a normal move
-                m.settype2(m.gettype1()); // set the original type as a new piece
-                m.setCpo(m.getNpo()); // the the capture postion be the New postion
-                m.settype3(cptype); // set the capture type
-            } else if (s == "enpassant") { // if it is an enpasssant
-               std::cout << turn << "use en passant!" << std::endl;
-                m.setenpassant();
-                m.settype2(m.gettype1()); // type1 = type2
-                if (turn == "White") {
-                    m.setCpo(std::pair<int,int>{m.getNpo().first, m.getNpo().second+1});
-                    m.settype3('p');
-                } else {
-                    m.setCpo(std::pair<int,int>{m.getNpo().first, m.getNpo().second-1});
-                    m.settype3('p');
-                }
-            } else if (s == "castling") {
-                std::cout << turn << "use castling!" << std::endl;
-                m.setcastling();
-                m.settype2(m.gettype1()); // type1 = type2
-                m.setCpo(m.getNpo()); // the the capture postion be the New postion
-                m.settype3(cptype); // set the capture type
-            } else if (s == "promotion") { // promotion
-                std::cout << turn << "use promotion!" << std::endl;
-                m.setCpo(m.getNpo()); // the the capture postion be the New postion
-                m.settype3(cptype); // set the capture type
-                bd->placePiece(m.gettype2(),m.getNpo()); // place new piece in the position
-            }
-            MoveHistory.push(std::make_unique<Move>(m)); // push move into history stack
-            updategd();
-            updatetd();
-            changeTurn();
-            curstep++;
-            return true;
-        } else {
-            std::cout << "Invalid move under check" << std::endl;
-            return false;
-        }
-    }
-}
-
-bool Gamecontroller::isdraw() {
-    if (!ischeck()) { // make sure the player is not in check
-        if (!dopossiblemoves(bd->getPiece(findKing().first, findKing().second))) { // we cannot move king
-            for (size_t i = 0; i < alivePieces().size(); i++) { // 
-                if(!dopossiblemoves(alivePieces()[i])) { // if we can have a valid move
-                    return false;
-                }
-            }
-            std::cout << "Draw!" << std::endl;
-            gamestate = "draw";
-            //updatesb();
-            return true;
-        }
-    } 
+  if (!gameRunning()) {
+    std::cout << "No game in progress." << std::endl;
     return false;
-}
+  }
+  const auto from = m.getOpo(), to = m.getNpo();
+  const char piece = bd->keyAt(from.first, from.second);
+  const std::string sq = Move::squareName(from);
+  if (piece == 'e') {
+    std::cout << "There is no piece on " << sq << "." << std::endl;
+    return false;
+  }
+  const bool pieceWhite = std::isupper(static_cast<unsigned char>(piece)) != 0;
+  if (pieceWhite != bd->whiteToMove()) {
+    std::cout << "The piece on " << sq << " belongs to " << (pieceWhite ? "White" : "Black")
+              << " - it is " << curTurn() << "'s turn." << std::endl;
+    return false;
+  }
 
-void Gamecontroller::setupboard(const std::string& s) {
-    if (curstep >= 1) {
-        std::cerr << "You cannot set up the game now" << std::endl;
-        return;
-    } else {
-        if (s[0] == '+') {
-            std::pair<int,int> po{7 - (s[5] - '0' - 1), s[4] - 'a'};
-            std::unique_ptr<Piece> p;
-            char type = bd->getPiece(po.first, po.second)->key();
-            bd->placePiece(s[2], po);
-            //std::cout << "the original type is "<< type << std::endl;
-            if (type == 'e') { // if there is already a piece on board
-                updategd();
-                updatetd();
-            }
-            return;
-        } else if (s[0] == '-') {
-            std::pair<int,int> po{7 - (s[3] - '0' - 1), s[2] - 'a'};
-            bd->removePiece(po);
-            updategd();
-            updatetd();
-            return;
-        } else if (s[0] == '=') {
-            std::istringstream iss{s};
-            std::string colour;
-            iss >> colour;
-            iss >> colour;
-            if (colour != "White" || colour != "Black") {
-                std::cerr << "Invalid Colour" << std::endl;
-                return;
-            }
-            turn = colour;
-            return;
-        } else if (s == "done") {
-            std::cout << "quit set up mode" << std::endl;
-            return;
-        }
+  char promo = m.gettype2();
+  if (promo != 'e') {
+    promo = static_cast<char>(std::tolower(static_cast<unsigned char>(promo)));
+    if (promo != 'q' && promo != 'r' && promo != 'b' && promo != 'n') {
+      std::cout << "A pawn can only promote to Q, R, B or N." << std::endl;
+      return false;
     }
+  }
+
+  std::vector<Move> legal = bd->legalMoves();
+  for (const auto &lm : legal) {
+    if (lm.getOpo() != from || lm.getNpo() != to) continue;
+    if (lm.ispromoted() &&
+        std::tolower(static_cast<unsigned char>(lm.gettype2())) != (promo == 'e' ? 'q' : promo))
+      continue;
+    applyMove(lm);
+    afterPositionChange();
+    return true;
+  }
+
+  // Explain why the move was rejected.
+  std::vector<Move> pseudo;
+  bd->pseudoLegalMoves(pseudo);
+  bool geometric = false;
+  for (const auto &pm : pseudo)
+    if (pm.getOpo() == from && pm.getNpo() == to) geometric = true;
+  const std::string mv = sq + Move::squareName(to);
+  if (geometric && bd->inCheck())
+    std::cout << "Illegal move " << mv << ": you must get out of check." << std::endl;
+  else if (geometric)
+    std::cout << "Illegal move " << mv << ": it would leave your king in check." << std::endl;
+  else
+    std::cout << "Illegal move " << mv << "." << std::endl;
+  return false;
 }
 
-void Gamecontroller::callprintsb() {
-    sb->printscoreboard();
+void Gamecontroller::computermakemove() {
+  if (!gameRunning() || !isComputerTurn()) return;
+  auto *c = dynamic_cast<Computer *>(players[curPlayerIndex()].get());
+  if (!c) return;
+  gd->setStatus(curTurn() + " (" + c->describe() + ") is thinking...");
+  Move m = c->decideMove(*this);
+  if (m.isNull()) return;
+  std::cout << curTurn() << " (" << c->describe() << ") plays " << m.toString();
+  if (!c->lastInfo().empty()) std::cout << "   [" << c->lastInfo() << "]";
+  std::cout << std::endl;
+  applyMove(m);
+  afterPositionChange();
+}
+
+void Gamecontroller::handleResign() {
+  if (!gameRunning()) {
+    std::cout << "No game in progress." << std::endl;
+    return;
+  }
+  const std::string winner = bd->whiteToMove() ? "Black" : "White";
+  finishGame(winner + "win", curTurn() + " resigned - " + winner + " wins");
+  updategd();
+  std::cout << winner << " wins!" << std::endl;
+  std::cout << "Start a new game with: game <white-player> <black-player>" << std::endl;
+}
+
+// ======================= setup mode =======================
+
+void Gamecontroller::beginSetup() {
+  inSetup = true;
+  gamestate = "none";
+  MoveHistory = {};
+  RedoS = {};
+  bd->makeblank();
+  std::cout << "Setup mode. Commands: + K e1 | - e1 | = white/black | default | clear | done"
+            << std::endl;
+  refresh();
+}
+
+void Gamecontroller::makeboardblank() {
+  bd->makeblank();
+  refresh();
+}
+
+void Gamecontroller::setupboard(const std::string &s) {
+  std::istringstream iss{s};
+  std::string cmd;
+  if (!(iss >> cmd)) return;
+  if (cmd == "+") {
+    std::string piece, square;
+    std::pair<int, int> pos;
+    if (!(iss >> piece >> square) || piece.size() != 1 ||
+        std::string("KQRBNPkqrbnp").find(piece[0]) == std::string::npos ||
+        !Move::parseSquare(square, pos)) {
+      std::cout << "Usage: + <piece> <square>   e.g. + K e1  (uppercase = White)" << std::endl;
+      return;
+    }
+    bd->placePiece(piece[0], pos);
+  } else if (cmd == "-") {
+    std::string square;
+    std::pair<int, int> pos;
+    if (!(iss >> square) || !Move::parseSquare(square, pos)) {
+      std::cout << "Usage: - <square>   e.g. - e1" << std::endl;
+      return;
+    }
+    bd->removePiece(pos);
+  } else if (cmd == "=") {
+    std::string colour;
+    iss >> colour;
+    for (char &ch : colour) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    if (colour == "white") bd->setTurn(true);
+    else if (colour == "black") bd->setTurn(false);
+    else {
+      std::cout << "Usage: = white   or   = black" << std::endl;
+      return;
+    }
+  } else if (cmd == "default" || cmd == "standard") {
+    bd = std::make_unique<Board>();
+  } else if (cmd == "clear") {
+    bd->makeblank();
+  } else if (cmd == "fen") {
+    std::string rest;
+    std::getline(iss, rest);
+    if (!bd->loadFEN(rest)) {
+      std::cout << "Invalid FEN." << std::endl;
+      return;
+    }
+  } else {
+    std::cout << "Unknown setup command. Use: + K e1 | - e1 | = white/black | default | "
+                 "clear | done" << std::endl;
+    return;
+  }
+  refresh();
 }
 
 bool Gamecontroller::validsetupboard() {
-  bool hasWhiteKing = false;
-  bool hasBlackKing = false;
-  for (int i = 0; i < 8; ++i) {
-    for (int y = 0; y < 8; ++y) {
-      // Check pawn endzone
-      if (tolower(bd->getPiece(i, y)->key()) == 'p' && (i == 0 || i == 7)) {
-        return false;
-      }
-      if (bd->getPiece(i, y)->key() == 'K') {
-        // FIX: Does find threats work for both kings?
-        std::string temp = turn;
-        turn = "White";
-        if (findthreats().size()) {
-          turn = temp;
-          return false;
-        }
-        turn = temp;
-        hasWhiteKing = true;
-      }
-      if (bd->getPiece(i, y)->key() == 'k') {
-        // FIX: Does find threats work for both kings?
-        std::string temp = turn;
-        turn = "Black";
-        if (findthreats().size()) {
-          turn = temp;
-          return false;
-        }
-        turn = temp;
-        hasBlackKing = true;
-      }
+  int whiteKings = 0, blackKings = 0;
+  bool pawnOnEdge = false;
+  for (int r = 0; r < 8; ++r)
+    for (int c = 0; c < 8; ++c) {
+      const char k = bd->keyAt(r, c);
+      if (k == 'K') ++whiteKings;
+      if (k == 'k') ++blackKings;
+      if ((k == 'P' || k == 'p') && (r == 0 || r == 7)) pawnOnEdge = true;
     }
+  if (whiteKings != 1 || blackKings != 1) {
+    std::cout << "Invalid board: there must be exactly one white king and one black king."
+              << std::endl;
+    return false;
   }
-  // Check board contains two kings
-  if (!(hasBlackKing && hasWhiteKing)) {
+  if (pawnOnEdge) {
+    std::cout << "Invalid board: pawns cannot be on the first or last rank." << std::endl;
+    return false;
+  }
+  if (bd->inCheck(true) || bd->inCheck(false)) {
+    std::cout << "Invalid board: neither king may start in check." << std::endl;
     return false;
   }
   return true;
 }
 
-void Gamecontroller::makeboardblank() {
-    bd->makeblank();
-    updategd();
-    updatetd();
+void Gamecontroller::endSetup() {
+  bd->finishSetup();
+  customStart = std::make_unique<Board>(*bd);
+  inSetup = false;
+  std::cout << "Setup complete (" << curTurn()
+            << " to move). The next game will start from this position." << std::endl;
+  updategd();
 }
 
-void Gamecontroller::handleResign() {
-  if (turn == "White") {
-    sb->addscores("Blackwin");
-  } else {
-    sb->addscores("Whitewin");
+// ======================= bonus: undo / redo / hint =======================
+
+void Gamecontroller::undo() {
+  if (!cancheat) {
+    std::cout << "undo is a bonus feature - run the program with -enablebonus." << std::endl;
+    return;
   }
+  if (!gameRunning()) {
+    std::cout << "No game in progress." << std::endl;
+    return;
+  }
+  auto madeByHuman = [this](const Move &m) {
+    const bool white = std::isupper(static_cast<unsigned char>(m.gettype1())) != 0;
+    return players[white ? 0 : 1]->isHuman();
+  };
+  if (MoveHistory.empty() ||
+      (hasHuman() && MoveHistory.size() == 1 && !madeByHuman(*MoveHistory.top()))) {
+    std::cout << "Nothing to undo." << std::endl;
+    return;
+  }
+  // Take back moves until a human's move has been undone (so the human is to
+  // move again); without human players undo a single move.
+  int count = 0;
+  while (!MoveHistory.empty()) {
+    const bool human = madeByHuman(*MoveHistory.top());
+    bd->undoMove();
+    RedoS.push(std::move(MoveHistory.top()));
+    MoveHistory.pop();
+    played.pop_back();
+    ++count;
+    if (human || !hasHuman()) break;
+  }
+  std::cout << "Took back " << count << (count == 1 ? " move." : " moves.") << std::endl;
+  afterPositionChange();
+}
+
+void Gamecontroller::redo() {
+  if (!cancheat) {
+    std::cout << "redo is a bonus feature - run the program with -enablebonus." << std::endl;
+    return;
+  }
+  if (!gameRunning()) {
+    std::cout << "No game in progress." << std::endl;
+    return;
+  }
+  if (RedoS.empty()) {
+    std::cout << "Nothing to redo." << std::endl;
+    return;
+  }
+  int count = 0;
+  do {
+    Move m = *RedoS.top();
+    RedoS.pop();
+    applyMove(m, false);
+    ++count;
+  } while (!RedoS.empty() && isComputerTurn() && hasHuman());
+  std::cout << "Replayed " << count << (count == 1 ? " move." : " moves.") << std::endl;
+  afterPositionChange();
+}
+
+void Gamecontroller::hint() {
+  if (!cancheat) {
+    std::cout << "hint is a bonus feature - run the program with -enablebonus." << std::endl;
+    return;
+  }
+  if (!gameRunning()) {
+    std::cout << "No game in progress." << std::endl;
+    return;
+  }
+  if (!hintEngine) hintEngine = std::make_unique<Level4>(800, false);
+  Board copy{*bd};
+  Move m = hintEngine->think(copy, 800);
+  std::cout << "Hint: " << m.toString() << "   [" << hintEngine->lastInfo() << "]" << std::endl;
 }

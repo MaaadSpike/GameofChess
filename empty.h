@@ -2,16 +2,15 @@
 #define _EMPTY_H_
 #include "piece.h"
 
+// Null-object piece that fills every empty square of the board.
 class Empty : public Piece {
 public:
-  Empty(std::pair<int, int> coord, bool iswhite);
-  bool isMove(const std::pair<int, int> &old_coord,
-              const std::pair<int, int> &new_coord,
-              Board &bd) const
-      override; // tell whether the movment is valid; Empty defaults to false
-
-  bool isEmptyPiece() const override; // tell whether the piece is empty piece
-  char key() const override;          // return the type of the piece
+  Empty(std::pair<int, int> coord, bool iswhite = false);
+  void possibleMoves(const Board &, std::vector<Move> &, bool = false) const override {}
+  bool isEmptyPiece() const override { return true; }
+  char key() const override { return 'e'; }
+  int value() const override { return 0; }
+  std::unique_ptr<Piece> clone() const override;
 };
 
 #endif

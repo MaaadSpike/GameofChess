@@ -1,95 +1,98 @@
 #ifndef _GAMECONTROLLER_H_
 #define _GAMECONTROLLER_H_
 #include "board.h"
-#include "player.h"
 #include "graphdisplay.h"
-#include "textdisplay.h"
+#include "move.h"
+#include "player.h"
 #include "scoreboard.h"
-#include "move.h"
-#include <string>
-#include <stack>
+#include "textdisplay.h"
 #include <memory>
-#include "move.h"
+#include <stack>
+#include <string>
 #include <vector>
 
-//Forward declarations
-class Player;
-class Algorithm;
-class Computer;
-class Level1;
-class Level2;
-class Level3;
+class Level4;
 
+// Controller of the MVC design: owns the board (model), the text and
+// graphical views, the scoreboard and the two players, validates and plays
+// moves, detects the end of the game and keeps the undo/redo stacks.
 class Gamecontroller {
-    friend class Algorithm; 
-    friend class Computer;
-    friend class Level1;
-    friend class Level2;
-    friend class Level3;
-    
-    int curPlayerIndex; // set the intial player to first player
-    int curstep; // set the intial step to 0
-    bool cancheat; // this flag tells whether we can use undo/redo/opening book
+  bool cancheat; // bonus features: undo / redo / hint
+  int thinkMs;   // thinking time of the level-4 computer
 
-    std::unique_ptr<Graphdisplay>  gd;
-    std::unique_ptr<Textdisplay> td;
-    std::unique_ptr<Board> bd;
-    std::unique_ptr<Scoreboard> sb;
-    std::vector<std::unique_ptr<Player>> players;
-    
-    std::string turn = "White"; // set the initial turn to white player
-    std::string gamestate = "continue"; // set the initial gamestate to continue
+  std::unique_ptr<Graphdisplay> gd;
+  std::unique_ptr<Textdisplay> td;
+  std::unique_ptr<Board> bd;
+  std::unique_ptr<Scoreboard> sb;
+  std::vector<std::unique_ptr<Player>> players; // [0] white, [1] black
 
-    //doing redo and undo after we finish the core
-    std::stack<std::unique_ptr<Move>> MoveHistory; 
-    std::stack<std::unique_ptr<Move>> RedoS;
+  std::string gamestate = "none"; // none / continue / Whitewin / Blackwin / draw
+  std::string endMessage;
 
-    //helper functions
-    std::pair<int,int> findKing(); // return the position of the king of this turn
-    bool VHcheck(const char& type, const int& x, const int& y); // VHcheck(char) is function tell whether the piece at postion<x,y> can be captured by piece with type type on vertical/horizontal directions.
-    bool Dcheck(const char& type, const int& x, const int& y); // Dcheck(char) is function tell whether the piece at postion<x,y> can be captured by piece with type type on diagonal directions
-    void VHthreats(const char& type, const int& x, const int& y, std::vector<std::unique_ptr<Piece>>& Threats); // VHcheck(char) is function stores all the piece attack king in vector Threat with type type on vertical/horizontal d
-    void Dthreats(const char& type, const int& x, const int& y, std::vector<std::unique_ptr<Piece>>& Threats); // Dcheck(char) is function stores all the piece attack king in vector Threat with type type on diagonal directions
-    void VHmoves(const int& x, const int& y, const std::unique_ptr<Piece>& p, std::vector<Move> & vm) const;
-    void Dmoves(const int& x, const int& y, const std::unique_ptr<Piece>& p, std::vector<Move> & vm) const;
-    std::vector<std::unique_ptr<Piece>> findthreats(); // find all pieces that attack the king
-    std::vector<std::unique_ptr<Piece>> alivePieces(); // find all piece alives expect for king
-    std::vector<Move> possiblemoves(const std::unique_ptr<Piece>& p) const; // return a vector of piece's possible move
-    bool dopossiblemoves(const std::unique_ptr<Piece>& p);// do all possible moves, if there is one move makes the player non-check return true; otherwise, false
-    bool dopossiblemoves2(std::pair<int,int> p1, std::pair<int,int> p2); // do one possible, if this move doesn't make the player in check return true; otherwise, return false
+  std::stack<std::unique_ptr<Move>> MoveHistory;
+  std::stack<std::unique_ptr<Move>> RedoS;
 
-    public:
-    Gamecontroller(bool cheat); // constructor
-    void initializeGame(std::vector<std::unique_ptr<Player>>&& players); // initialize the players of the games
-    std::string curTurn(); // return the white or black in this turn
-    void changeTurn(); // make another player's turn
-    std::string checkState(); // check the status of this game: whitewin blackwin draw continue
-    void updatetd(); // update the textdisplay
-    void updategd(); // update the graphdisplay
-    void updatesb(); // update the scoreboard
+  std::unique_ptr<Board> customStart; // position prepared in setup mode
+  bool standardStart = true;
+  bool inSetup = false;
+  std::vector<std::string> played;    // moves of this game, e.g. "e2e4"
+  std::unique_ptr<Level4> hintEngine;
 
-    bool ischeck(); // return true if in currect turn the player is in check; otherwise flase
-    bool ischeckmate(); // return true if in currect turn the player is in checkmate; otherwise flase
-    bool makeMove(Move& m); // if move is valid, return true and change the board; otherwise, return false
-    bool isdraw(); // if the player is not in check, but any movement is invalid, return true; otherwise, return false
-    
-    //doing redo and undo after we finish the core
-    //void turnoncheat(); // turn on cheat model
-    //void undo(); // undo the game
-    //void redo(); //redo the game
-    //void openingbook(); 
+  void applyMove(const Move &m, bool clearRedo = true);
+  void afterPositionChange();
+  void finishGame(const std::string &result, const std::string &message);
+  std::string statusLine() const;
+  void refresh();
+  int curPlayerIndex() const { return bd->whiteToMove() ? 0 : 1; }
 
-    void computermakemove(); 
-    int whomakethisstep(); // In cur turn, if it is a player of computer, then return c; if it is human, return h;
-    //setup model
-    void setupboard(const std::string& s); // read the string and do setup
-    
-    // check if setupboard is in a valid state
-    bool validsetupboard();
-    void callprintsb();
-    void makeboardblank();
-    Board& getBoard() {
-        return *bd;
-    }
+public:
+  explicit Gamecontroller(bool cheat, bool graphics = true, int thinkMs = 1200);
+  ~Gamecontroller();
+
+  void initializeGame(std::vector<std::unique_ptr<Player>> &&players);
+  bool gameRunning() const { return gamestate == "continue"; }
+  std::string curTurn() const { return bd->whiteToMove() ? "White" : "Black"; }
+  std::string checkState() const { return gamestate; }
+
+  void updatetd();
+  void updategd();
+  void updatesb();
+  void printBoard() { refresh(); }
+
+  bool ischeck() const;
+  bool ischeckmate();
+  bool isdraw();
+
+  // Human move: m holds the from/to squares and, for a promotion, the piece
+  // letter in type2 ('e' = not given -> queen). Returns false if illegal.
+  bool makeMove(Move &m);
+  void computermakemove();
+  int whomakethisstep() const; // 0 = human, 1..4 = computer level
+  bool isComputerTurn() const;
+  bool hasHuman() const;
+  void handleResign();
+
+  // ----- setup mode -----
+  bool canSetup() const { return !gameRunning(); }
+  void beginSetup();
+  void setupboard(const std::string &s);
+  bool validsetupboard();
+  void endSetup();
+  void makeboardblank();
+
+  // ----- bonus features (-enablebonus) -----
+  bool cheatsEnabled() const { return cancheat; }
+  void undo();
+  void redo();
+  void hint();
+
+  void callprintsb() const;
+
+  // ----- read access for the computer players -----
+  const Board &getBoard() const { return *bd; }
+  bool isStandardStart() const { return standardStart; }
+  const std::vector<std::string> &playedMoves() const { return played; }
+  int thinkTime() const { return thinkMs; }
+  std::vector<Move> legalMoves() const;
 };
 #endif
